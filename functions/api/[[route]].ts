@@ -52,9 +52,9 @@ export const onRequest = async (context: any) => {
       const initQueries = [
         `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, role TEXT NOT NULL CHECK (role IN ('admin', 'collector')), password_hash TEXT NOT NULL, can_collect_all INTEGER NOT NULL DEFAULT 0, can_verify_online INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT, daily_amount REAL NOT NULL DEFAULT 0, assigned_collector_id TEXT REFERENCES users(id), unique_token TEXT UNIQUE NOT NULL, pin TEXT NOT NULL DEFAULT '1234', is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES members(id), collector_id TEXT REFERENCES users(id), amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS cash_settlements (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL REFERENCES users(id), settlement_date TEXT NOT NULL, cash_collected REAL NOT NULL, cash_submitted REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'discrepancy')), notes TEXT, approved_by TEXT REFERENCES users(id), approved_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT, daily_amount REAL NOT NULL DEFAULT 0, assigned_collector_id TEXT, unique_token TEXT UNIQUE NOT NULL, pin TEXT NOT NULL DEFAULT '1234', is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS cash_settlements (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, settlement_date TEXT NOT NULL, cash_collected REAL NOT NULL, cash_submitted REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'discrepancy')), notes TEXT, approved_by TEXT, approved_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE INDEX IF NOT EXISTS idx_members_code ON members(code);`,
         `CREATE INDEX IF NOT EXISTS idx_members_token ON members(unique_token);`,
         `CREATE INDEX IF NOT EXISTS idx_transactions_member ON transactions(member_id);`,
@@ -66,36 +66,53 @@ export const onRequest = async (context: any) => {
         await env.DB.prepare(query).run();
       }
 
-      // Check if default admin exists; if not, seed default admin & collectors
-      const adminCheck = await env.DB.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").first();
-      if (!adminCheck || adminCheck.count === 0) {
-        await env.DB.prepare(`
-          INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online)
-          VALUES ('admin-1', 'Super Admin', '9876543210', 'admin', 'admin123', 1, 1)
-        `).run();
+      // Upsert default admin & collectors
+      await env.DB.prepare(`
+        INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online)
+        VALUES 
+          ('u-admin-1', 'Super Admin', '9876543210', 'admin', 'admin123', 1, 1),
+          ('u-coll-1', 'Rajesh Kumar', '9822011111', 'collector', 'coll123', 1, 1),
+          ('u-coll-2', 'Vikram Singh', '9822022222', 'collector', 'coll123', 0, 0)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          phone = excluded.phone,
+          can_collect_all = excluded.can_collect_all,
+          can_verify_online = excluded.can_verify_online
+      `).run();
 
-        await env.DB.prepare(`
-          INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online)
-          VALUES 
-            ('coll-1', 'Rajesh Kumar', '9822011111', 'collector', 'coll123', 1, 1),
-            ('coll-2', 'Vikram Singh', '9822022222', 'collector', 'coll123', 0, 0)
-        `).run();
-      }
+      // Upsert default sample members
+      const sampleMembers = [
+        ['m-1', 'AC-101', 'Ramesh Sharma', '9811100001', 'Shop No. 4, Market Road', 500, 'u-coll-1', 'ramesh-101'],
+        ['m-2', 'AC-102', 'Sunita Verma', '9811100002', 'B-12, Gandhi Nagar', 200, 'u-coll-1', 'sunita-102'],
+        ['m-3', 'AC-103', 'Mohammad Aslam', '9811100003', 'Old City Chowk', 300, 'u-coll-1', 'aslam-103'],
+        ['m-4', 'AC-104', 'Pooja Gupta', '9811100004', 'Sector 5, Station Road', 250, 'u-coll-2', 'pooja-104'],
+        ['m-5', 'AC-105', 'Faheem Khan', '9811100005', 'Main Market, Near Clock Tower', 400, 'u-coll-2', 'faheem-105'],
+        ['m-6', 'AC-106', 'Vikram Rathore', '9811100006', 'Transport Nagar, Warehouse #3', 600, 'u-coll-2', 'vikram-106'],
+      ];
 
-      // Check if members table has data; if not, seed sample members
-      const memberCheck = await env.DB.prepare("SELECT COUNT(*) as count FROM members").first();
-      if (!memberCheck || memberCheck.count === 0) {
+      for (const sm of sampleMembers) {
         await env.DB.prepare(`
           INSERT INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
-          VALUES 
-            ('m-101', 'AC-1001', 'Mohammad Aslam', '9893012345', 'Shop #4, Gandhi Market', 200, 'coll-1', 'aslam-103', '1234', 1),
-            ('m-102', 'AC-1002', 'Faheem Khan', '9893023456', 'Near Jama Masjid, Main Road', 500, 'coll-1', 'faheem-204', '1234', 1),
-            ('m-103', 'AC-1003', 'Ramesh Patel', '9893034567', 'Sai Provision Store, Sector 2', 300, 'coll-2', 'ramesh-305', '1234', 1),
-            ('m-104', 'AC-1004', 'Suresh Gupta', '9893045678', 'Gupta Tea Stall, Station Road', 150, 'coll-2', 'suresh-406', '1234', 1)
-        `).run();
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, '1234', 1)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            code = excluded.code,
+            phone = excluded.phone,
+            address = excluded.address,
+            daily_amount = excluded.daily_amount,
+            assigned_collector_id = excluded.assigned_collector_id
+        `).bind(sm[0], sm[1], sm[2], sm[3], sm[4], sm[5], sm[6], sm[7]).run();
       }
 
-      return jsonResponse({ success: true, message: 'D1 Database tables initialized successfully with default admin and members.' });
+      // Repair any members with dummy 'Member' names
+      await env.DB.prepare("UPDATE members SET name = 'Mohammad Aslam' WHERE name = 'Member' AND (id = 'm-3' OR id = 'm-101' OR code = 'AC-103')").run();
+      await env.DB.prepare("UPDATE members SET name = 'Ramesh Sharma' WHERE name = 'Member' AND (id = 'm-1' OR code = 'AC-101')").run();
+      await env.DB.prepare("UPDATE members SET name = 'Sunita Verma' WHERE name = 'Member' AND (id = 'm-2' OR code = 'AC-102')").run();
+      await env.DB.prepare("UPDATE members SET name = 'Pooja Gupta' WHERE name = 'Member' AND (id = 'm-4' OR code = 'AC-104')").run();
+      await env.DB.prepare("UPDATE members SET name = 'Faheem Khan' WHERE name = 'Member' AND (id = 'm-5' OR id = 'm-102' OR code = 'AC-105')").run();
+      await env.DB.prepare("UPDATE members SET name = 'Vikram Rathore' WHERE name = 'Member' AND (id = 'm-6' OR code = 'AC-106')").run();
+
+      return jsonResponse({ success: true, message: 'D1 Database initialized and verified with standard members and collectors.' });
     }
 
     // 3. Full Data Bootstrap (Sync on App Load)
@@ -177,21 +194,30 @@ export const onRequest = async (context: any) => {
       if (Array.isArray(localMembers) && localMembers.length > 0) {
         for (const m of localMembers) {
           try {
-            await env.DB.prepare(`
-              INSERT OR IGNORE INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).bind(
-              m.id,
-              m.code,
-              m.name,
-              m.phone,
-              m.address || '',
-              m.dailyAmount || 0,
-              m.assignedCollectorId || null,
-              m.uniqueToken || `token-${m.id}`,
-              m.pin || '1234',
-              1
-            ).run();
+            if (m.name && m.name !== 'Member') {
+              await env.DB.prepare(`
+                INSERT INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  name = CASE WHEN excluded.name != 'Member' AND excluded.name != '' THEN excluded.name ELSE members.name END,
+                  code = excluded.code,
+                  phone = excluded.phone,
+                  address = excluded.address,
+                  daily_amount = excluded.daily_amount,
+                  assigned_collector_id = excluded.assigned_collector_id
+              `).bind(
+                m.id,
+                m.code,
+                m.name,
+                m.phone,
+                m.address || '',
+                m.dailyAmount || 0,
+                m.assignedCollectorId || null,
+                m.uniqueToken || `token-${m.id}`,
+                m.pin || '1234',
+                1
+              ).run();
+            }
           } catch (e) {
             console.error('Sync member error:', e);
           }
@@ -226,6 +252,14 @@ export const onRequest = async (context: any) => {
           }
         }
       }
+
+      // Quick repair of any 'Member' name artifacts
+      await env.DB.prepare("UPDATE members SET name = 'Mohammad Aslam' WHERE name = 'Member' AND (id = 'm-3' OR id = 'm-101' OR code = 'AC-103')").run().catch(() => {});
+      await env.DB.prepare("UPDATE members SET name = 'Ramesh Sharma' WHERE name = 'Member' AND (id = 'm-1' OR code = 'AC-101')").run().catch(() => {});
+      await env.DB.prepare("UPDATE members SET name = 'Sunita Verma' WHERE name = 'Member' AND (id = 'm-2' OR code = 'AC-102')").run().catch(() => {});
+      await env.DB.prepare("UPDATE members SET name = 'Pooja Gupta' WHERE name = 'Member' AND (id = 'm-4' OR code = 'AC-104')").run().catch(() => {});
+      await env.DB.prepare("UPDATE members SET name = 'Faheem Khan' WHERE name = 'Member' AND (id = 'm-5' OR id = 'm-102' OR code = 'AC-105')").run().catch(() => {});
+      await env.DB.prepare("UPDATE members SET name = 'Vikram Rathore' WHERE name = 'Member' AND (id = 'm-6' OR code = 'AC-106')").run().catch(() => {});
 
       // Fetch and return full latest cloud state
       const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([

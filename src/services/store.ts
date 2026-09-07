@@ -96,19 +96,31 @@ class DataStore {
 
       if (data.members && Array.isArray(data.members) && data.members.length > 0) {
         const memberMap = new Map<string, Member>();
+        // First populate with local members to preserve real names
+        localMembers.forEach(m => {
+          if (m.name && m.name !== 'Member') {
+            memberMap.set(m.id, m);
+          }
+        });
         data.members.forEach((m: any) => {
+          const existing = memberMap.get(m.id);
+          const initialFallback = INITIAL_MEMBERS.find(im => im.id === m.id || im.code === m.code);
+          const validName = (m.name && m.name !== 'Member')
+            ? m.name
+            : (existing?.name || initialFallback?.name || 'Member');
+
           memberMap.set(m.id, {
             id: m.id,
-            code: m.code || `AC-${m.id}`,
-            name: m.name,
-            phone: m.phone,
-            address: m.address || '',
-            dailyAmount: Number(m.dailyAmount ?? m.daily_amount) || 0,
-            assignedCollectorId: m.assignedCollectorId || m.assigned_collector_id || '',
-            uniqueToken: m.uniqueToken || m.unique_token || `token-${m.id}`,
-            pin: m.pin || '1234',
-            isActive: m.isActive !== undefined ? Boolean(m.isActive) : Boolean(m.is_active ?? 1),
-            createdAt: m.createdAt || m.created_at || new Date().toISOString(),
+            code: m.code || existing?.code || initialFallback?.code || `AC-${m.id}`,
+            name: validName,
+            phone: m.phone || existing?.phone || initialFallback?.phone || '',
+            address: m.address || existing?.address || initialFallback?.address || '',
+            dailyAmount: Number(m.dailyAmount ?? m.daily_amount ?? existing?.dailyAmount ?? initialFallback?.dailyAmount) || 0,
+            assignedCollectorId: m.assignedCollectorId || m.assigned_collector_id || existing?.assignedCollectorId || initialFallback?.assignedCollectorId || '',
+            uniqueToken: m.uniqueToken || m.unique_token || existing?.uniqueToken || initialFallback?.uniqueToken || `token-${m.id}`,
+            pin: m.pin || existing?.pin || initialFallback?.pin || '1234',
+            isActive: m.isActive !== undefined ? Boolean(m.isActive) : Boolean(m.is_active ?? existing?.isActive ?? 1),
+            createdAt: m.createdAt || m.created_at || existing?.createdAt || new Date().toISOString(),
           });
         });
         localMembers.forEach(m => {
@@ -353,8 +365,14 @@ class DataStore {
       createdAt: new Date().toISOString(),
     };
 
+    const member = this.getMemberById(data.memberId);
     this.set(STORAGE_KEYS.TRANSACTIONS, [newTx, ...transactions]);
-    this.postApi('transactions', newTx);
+    this.postApi('transactions', {
+      ...newTx,
+      memberCode: member?.code,
+      memberName: member?.name,
+      memberPhone: member?.phone,
+    });
     return newTx;
   }
 
@@ -440,9 +458,11 @@ class DataStore {
   // Statistics calculation helpers
   getCollectorTodayStats(collectorId: string) {
     const today = getTodayDateString();
-    const transactions = this.getTransactions().filter(
-      t => t.collectorId === collectorId && t.collectionDate === today && t.status === 'completed'
-    );
+    const cleanId = collectorId.replace(/^u-/, '');
+    const transactions = this.getTransactions().filter(t => {
+      const cleanCollId = t.collectorId ? t.collectorId.replace(/^u-/, '') : '';
+      return (t.collectorId === collectorId || cleanCollId === cleanId) && t.collectionDate === today && t.status === 'completed';
+    });
 
     const cashCollected = transactions
       .filter(t => t.paymentMode === 'cash')
@@ -456,17 +476,19 @@ class DataStore {
     const collectedMemberIds = new Set(transactions.map(t => t.memberId));
 
     // Get today's settlement status if submitted
-    const settlement = this.getSettlements().find(
-      s => s.collectorId === collectorId && s.settlementDate === today
-    );
+    const settlement = this.getSettlements().find(s => {
+      const cleanCollId = s.collectorId ? s.collectorId.replace(/^u-/, '') : '';
+      return (s.collectorId === collectorId || cleanCollId === cleanId) && s.settlementDate === today;
+    });
 
-    const collector = this.getUsers().find(u => u.id === collectorId);
+    const collector = this.getUsers().find(u => u.id === collectorId || u.id.replace(/^u-/, '') === cleanId);
     const pendingOnlineTransactions = this.getTransactions().filter(t => {
       if (t.status !== 'pending_verification') return false;
       if (!collector?.canVerifyPayments) return false;
       if (collector.canCollectAll) return true;
       const member = this.getMemberById(t.memberId);
-      return member?.assignedCollectorId === collectorId;
+      const cleanAssigned = member?.assignedCollectorId ? member.assignedCollectorId.replace(/^u-/, '') : '';
+      return member?.assignedCollectorId === collectorId || cleanAssigned === cleanId;
     });
 
     return {

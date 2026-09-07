@@ -33,7 +33,9 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
   // Filter members based on collector permission
   const eligibleMembers = allMembers.filter(m => {
     if (collector.canCollectAll) return true;
-    return m.assignedCollectorId === collector.id;
+    const cleanCollectorId = collector.id.replace(/^u-/, '');
+    const cleanAssignedId = m.assignedCollectorId ? m.assignedCollectorId.replace(/^u-/, '') : '';
+    return m.assignedCollectorId === collector.id || cleanAssignedId === cleanCollectorId;
   });
 
   const pendingMembers = eligibleMembers.filter(m => !paidMemberIds.has(m.id));
