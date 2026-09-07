@@ -37,6 +37,41 @@ class DataStore {
     }
   }
 
+  private async postApi(endpoint: string, data: unknown) {
+    try {
+      await fetch(`/api/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch {
+      // Offline fallback
+    }
+  }
+
+  async syncWithCloud(): Promise<void> {
+    try {
+      const res = await fetch('/api/bootstrap');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.users && data.users.length > 0) {
+          this.set(STORAGE_KEYS.USERS, data.users);
+        }
+        if (data.members && data.members.length > 0) {
+          this.set(STORAGE_KEYS.MEMBERS, data.members);
+        }
+        if (data.transactions && data.transactions.length > 0) {
+          this.set(STORAGE_KEYS.TRANSACTIONS, data.transactions);
+        }
+        if (data.settlements && data.settlements.length > 0) {
+          this.set(STORAGE_KEYS.SETTLEMENTS, data.settlements);
+        }
+      }
+    } catch {
+      // Offline mode
+    }
+  }
+
   // Auth User
   getAuthUser(): User | null {
     return this.get<User | null>(STORAGE_KEYS.AUTH_USER, null);
@@ -212,6 +247,7 @@ class DataStore {
     };
 
     this.set(STORAGE_KEYS.TRANSACTIONS, [newTx, ...transactions]);
+    this.postApi('transactions', newTx);
     return newTx;
   }
 
@@ -230,6 +266,7 @@ class DataStore {
       return t;
     });
     this.set(STORAGE_KEYS.TRANSACTIONS, updated);
+    this.postApi('transactions/verify', { transactionId: txId });
   }
 
   rejectOnlineTransaction(txId: string, verifierUserId: string, reason: string): void {

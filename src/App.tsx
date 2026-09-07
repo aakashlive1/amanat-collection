@@ -31,6 +31,11 @@ export function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [memberToken, setMemberToken] = useState<string | null>(null);
 
+  // Sync with Cloudflare D1 on app load if online
+  useEffect(() => {
+    store.syncWithCloud();
+  }, []);
+
   // Check URL hash for public member passbook link (e.g. #/m/ramesh-101 or /m/ramesh-101)
   useEffect(() => {
     const handleHashChange = () => {
