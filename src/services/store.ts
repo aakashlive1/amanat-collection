@@ -54,17 +54,64 @@ class DataStore {
       const res = await fetch('/api/bootstrap');
       if (res.ok) {
         const data = await res.json();
-        if (data.users && data.users.length > 0) {
-          this.set(STORAGE_KEYS.USERS, data.users);
+        if (data.users && Array.isArray(data.users) && data.users.length > 0) {
+          const mappedUsers = data.users.map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            phone: u.phone,
+            role: u.role,
+            canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
+            canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
+            isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
+            createdAt: u.createdAt || u.created_at || new Date().toISOString(),
+          }));
+          this.set(STORAGE_KEYS.USERS, mappedUsers);
         }
-        if (data.members && data.members.length > 0) {
-          this.set(STORAGE_KEYS.MEMBERS, data.members);
+        if (data.members && Array.isArray(data.members) && data.members.length > 0) {
+          const mappedMembers = data.members.map((m: any) => ({
+            id: m.id,
+            code: m.code,
+            name: m.name,
+            phone: m.phone,
+            address: m.address || '',
+            dailyAmount: Number(m.dailyAmount ?? m.daily_amount) || 0,
+            assignedCollectorId: m.assignedCollectorId || m.assigned_collector_id || '',
+            uniqueToken: m.uniqueToken || m.unique_token,
+            pin: m.pin || '1234',
+            isActive: m.isActive !== undefined ? Boolean(m.isActive) : Boolean(m.is_active ?? 1),
+            createdAt: m.createdAt || m.created_at || new Date().toISOString(),
+          }));
+          this.set(STORAGE_KEYS.MEMBERS, mappedMembers);
         }
-        if (data.transactions && data.transactions.length > 0) {
-          this.set(STORAGE_KEYS.TRANSACTIONS, data.transactions);
+        if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+          const mappedTx = data.transactions.map((t: any) => ({
+            id: t.id,
+            memberId: t.memberId || t.member_id,
+            collectorId: t.collectorId || t.collector_id || null,
+            amount: Number(t.amount) || 0,
+            paymentMode: t.paymentMode || t.payment_mode,
+            status: t.status,
+            utrNumber: t.utrNumber || t.utr_number || undefined,
+            notes: t.notes || undefined,
+            collectionDate: t.collectionDate || t.collection_date,
+            createdAt: t.createdAt || t.created_at,
+          }));
+          this.set(STORAGE_KEYS.TRANSACTIONS, mappedTx);
         }
-        if (data.settlements && data.settlements.length > 0) {
-          this.set(STORAGE_KEYS.SETTLEMENTS, data.settlements);
+        if (data.settlements && Array.isArray(data.settlements) && data.settlements.length > 0) {
+          const mappedSettlements = data.settlements.map((s: any) => ({
+            id: s.id,
+            collectorId: s.collectorId || s.collector_id,
+            settlementDate: s.settlementDate || s.settlement_date,
+            cashCollected: Number(s.cashCollected ?? s.cash_collected) || 0,
+            cashSubmitted: Number(s.cashSubmitted ?? s.cash_submitted) || 0,
+            status: s.status,
+            notes: s.notes || undefined,
+            approvedBy: s.approvedBy || s.approved_by || undefined,
+            approvedAt: s.approvedAt || s.approved_at || undefined,
+            createdAt: s.createdAt || s.created_at,
+          }));
+          this.set(STORAGE_KEYS.SETTLEMENTS, mappedSettlements);
         }
       }
     } catch {
@@ -84,10 +131,23 @@ class DataStore {
   login(phone: string, role?: 'admin' | 'collector'): User | null {
     const users = this.getUsers();
     const cleanPhone = phone.trim();
-    const user = users.find(u => u.phone === cleanPhone && (!role || u.role === role) && u.isActive);
+    const user = users.find(u => {
+      const active = u.isActive !== undefined ? Boolean(u.isActive) : Boolean((u as any).is_active ?? 1);
+      return u.phone === cleanPhone && (!role || u.role === role) && active;
+    });
     if (user) {
-      this.setAuthUser(user);
-      return user;
+      const sanitizedUser: User = {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        canCollectAll: user.canCollectAll !== undefined ? Boolean(user.canCollectAll) : Boolean((user as any).can_collect_all),
+        canVerifyPayments: user.canVerifyPayments !== undefined ? Boolean(user.canVerifyPayments) : Boolean((user as any).can_verify_online),
+        isActive: true,
+        createdAt: user.createdAt || (user as any).created_at || new Date().toISOString(),
+      };
+      this.setAuthUser(sanitizedUser);
+      return sanitizedUser;
     }
     return null;
   }

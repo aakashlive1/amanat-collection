@@ -77,12 +77,25 @@ export const onRequest = async (context: any) => {
         await env.DB.prepare(`
           INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online)
           VALUES 
-            ('coll-1', 'Sameer Pathan', '9822011111', 'collector', 'coll123', 1, 1),
-            ('coll-2', 'Imran Shaikh', '9822022222', 'collector', 'coll123', 0, 0)
+            ('coll-1', 'Rajesh Kumar', '9822011111', 'collector', 'coll123', 1, 1),
+            ('coll-2', 'Vikram Singh', '9822022222', 'collector', 'coll123', 0, 0)
         `).run();
       }
 
-      return jsonResponse({ success: true, message: 'D1 Database tables initialized successfully with default admin.' });
+      // Check if members table has data; if not, seed sample members
+      const memberCheck = await env.DB.prepare("SELECT COUNT(*) as count FROM members").first();
+      if (!memberCheck || memberCheck.count === 0) {
+        await env.DB.prepare(`
+          INSERT INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
+          VALUES 
+            ('m-101', 'AC-1001', 'Mohammad Aslam', '9893012345', 'Shop #4, Gandhi Market', 200, 'coll-1', 'aslam-103', '1234', 1),
+            ('m-102', 'AC-1002', 'Faheem Khan', '9893023456', 'Near Jama Masjid, Main Road', 500, 'coll-1', 'faheem-204', '1234', 1),
+            ('m-103', 'AC-1003', 'Ramesh Patel', '9893034567', 'Sai Provision Store, Sector 2', 300, 'coll-2', 'ramesh-305', '1234', 1),
+            ('m-104', 'AC-1004', 'Suresh Gupta', '9893045678', 'Gupta Tea Stall, Station Road', 150, 'coll-2', 'suresh-406', '1234', 1)
+        `).run();
+      }
+
+      return jsonResponse({ success: true, message: 'D1 Database tables initialized successfully with default admin and members.' });
     }
 
     // 3. Full Data Bootstrap (Sync on App Load)
@@ -95,12 +108,63 @@ export const onRequest = async (context: any) => {
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
       ]);
 
+      const users = (usersRes.results || []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        phone: u.phone,
+        role: u.role,
+        canCollectAll: Boolean(u.can_collect_all),
+        canVerifyPayments: Boolean(u.can_verify_online),
+        isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
+        createdAt: u.created_at,
+      }));
+
+      const members = (membersRes.results || []).map((m: any) => ({
+        id: m.id,
+        code: m.code,
+        name: m.name,
+        phone: m.phone,
+        address: m.address || '',
+        dailyAmount: Number(m.daily_amount) || 0,
+        assignedCollectorId: m.assigned_collector_id || '',
+        uniqueToken: m.unique_token,
+        pin: m.pin || '1234',
+        isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
+        createdAt: m.created_at,
+      }));
+
+      const transactions = (txRes.results || []).map((t: any) => ({
+        id: t.id,
+        memberId: t.member_id,
+        collectorId: t.collector_id || null,
+        amount: Number(t.amount) || 0,
+        paymentMode: t.payment_mode,
+        status: t.status,
+        utrNumber: t.utr_number || undefined,
+        notes: t.notes || undefined,
+        collectionDate: t.collection_date,
+        createdAt: t.created_at,
+      }));
+
+      const settlements = (settlementsRes.results || []).map((s: any) => ({
+        id: s.id,
+        collectorId: s.collector_id,
+        settlementDate: s.settlement_date,
+        cashCollected: Number(s.cash_collected) || 0,
+        cashSubmitted: Number(s.cash_submitted) || 0,
+        status: s.status,
+        notes: s.notes || undefined,
+        approvedBy: s.approved_by || undefined,
+        approvedAt: s.approved_at || undefined,
+        createdAt: s.created_at,
+      }));
+
       return jsonResponse({
         settings: settingsRes.results || [],
-        users: usersRes.results || [],
-        members: membersRes.results || [],
-        transactions: txRes.results || [],
-        settlements: settlementsRes.results || [],
+        users,
+        members,
+        transactions,
+        settlements,
       });
     }
 
