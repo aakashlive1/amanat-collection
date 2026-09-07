@@ -28,8 +28,21 @@ export function App() {
   useStoreUpdate(); // Reactive re-render on any store change
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => store.getAuthUser());
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const authUser = store.getAuthUser();
+    if (!authUser) return 'dashboard';
+    const saved = localStorage.getItem(`amanat_active_tab_${authUser.role}`);
+    if (saved) return saved;
+    return authUser.role === 'collector' ? 'collect' : 'dashboard';
+  });
   const [memberToken, setMemberToken] = useState<string | null>(null);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    if (currentUser) {
+      localStorage.setItem(`amanat_active_tab_${currentUser.role}`, tab);
+    }
+  };
 
   // Periodic background sync with Cloudflare D1 every 8 seconds
   useEffect(() => {
@@ -67,7 +80,9 @@ export function App() {
   const handleLogin = (user: User) => {
     store.setAuthUser(user);
     setCurrentUser(user);
-    setActiveTab(user.role === 'admin' ? 'dashboard' : 'collect');
+    const defaultTab = user.role === 'admin' ? 'dashboard' : 'collect';
+    const saved = localStorage.getItem(`amanat_active_tab_${user.role}`) || defaultTab;
+    setActiveTab(saved);
   };
 
   const handleLogout = () => {
@@ -78,7 +93,9 @@ export function App() {
   const handleSelectUser = (user: User) => {
     store.setAuthUser(user);
     setCurrentUser(user);
-    setActiveTab(user.role === 'admin' ? 'dashboard' : 'collect');
+    const defaultTab = user.role === 'admin' ? 'dashboard' : 'collect';
+    const saved = localStorage.getItem(`amanat_active_tab_${user.role}`) || defaultTab;
+    setActiveTab(saved);
   };
 
   // If user is accessing public member passbook route
@@ -129,19 +146,23 @@ export function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
         {currentUser.role === 'admin' ? (
           <>
-            {activeTab === 'dashboard' && <AdminDashboard onNavigateTab={setActiveTab} />}
             {activeTab === 'members' && <AdminMembers />}
             {activeTab === 'collectors' && <AdminCollectors />}
             {activeTab === 'verifications' && <OnlineVerifications currentUser={currentUser} />}
             {activeTab === 'reports' && <AdminReports />}
             {activeTab === 'settlements' && <AdminSettlements />}
             {activeTab === 'settings' && <AdminSettings />}
+            {(activeTab === 'dashboard' || !['members', 'collectors', 'verifications', 'reports', 'settlements', 'settings'].includes(activeTab)) && (
+              <AdminDashboard onNavigateTab={handleTabChange} />
+            )}
           </>
         ) : (
           <>
-            {activeTab === 'collect' && <CollectorCollect collector={currentUser} />}
             {activeTab === 'verifications' && <OnlineVerifications currentUser={currentUser} />}
             {activeTab === 'summary' && <CollectorSummary collector={currentUser} />}
+            {(activeTab === 'collect' || !['verifications', 'summary'].includes(activeTab)) && (
+              <CollectorCollect collector={currentUser} />
+            )}
           </>
         )}
       </main>
@@ -151,7 +172,7 @@ export function App() {
         role={currentUser.role}
         canVerifyPayments={currentUser.canVerifyPayments}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         pendingSettlementsCount={pendingSettlementsCount}
         pendingVerificationsCount={pendingVerificationsCount}
       />
