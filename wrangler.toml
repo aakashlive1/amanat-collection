@@ -1,0 +1,12 @@
+name = "amanat-collection"
+main = "src/api/worker.ts"
+compatibility_date = "2024-09-01"
+
+# Cloudflare D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "amanat_collection_db"
+database_id = "your-d1-database-id-here"
+
+[site]
+bucket = "./dist"
