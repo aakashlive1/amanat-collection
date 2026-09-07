@@ -168,10 +168,154 @@ export const onRequest = async (context: any) => {
       });
     }
 
+    // 3.5. Two-Way Sync Endpoint (Pushes unsynced local data and pulls latest cloud state)
+    if (path === 'sync' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const { localTransactions, localMembers } = body as any;
+
+      // Upsert any local members if sent
+      if (Array.isArray(localMembers) && localMembers.length > 0) {
+        for (const m of localMembers) {
+          try {
+            await env.DB.prepare(`
+              INSERT OR IGNORE INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+              m.id,
+              m.code,
+              m.name,
+              m.phone,
+              m.address || '',
+              m.dailyAmount || 0,
+              m.assignedCollectorId || null,
+              m.uniqueToken || `token-${m.id}`,
+              m.pin || '1234',
+              1
+            ).run();
+          } catch (e) {
+            console.error('Sync member error:', e);
+          }
+        }
+      }
+
+      // Upsert any local transactions if sent
+      if (Array.isArray(localTransactions) && localTransactions.length > 0) {
+        for (const tx of localTransactions) {
+          try {
+            await env.DB.prepare(`
+              INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, status, utr_number, notes, collection_date, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET
+                status = excluded.status,
+                utr_number = excluded.utr_number,
+                notes = excluded.notes
+            `).bind(
+              tx.id,
+              tx.memberId,
+              tx.collectorId || null,
+              tx.amount,
+              tx.paymentMode,
+              tx.status || 'completed',
+              tx.utrNumber || null,
+              tx.notes || null,
+              tx.collectionDate,
+              tx.createdAt || new Date().toISOString()
+            ).run();
+          } catch (e) {
+            console.error('Sync tx error:', e);
+          }
+        }
+      }
+
+      // Fetch and return full latest cloud state
+      const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([
+        env.DB.prepare('SELECT key, value FROM app_settings').all(),
+        env.DB.prepare('SELECT id, name, phone, role, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
+        env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
+        env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
+        env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
+      ]);
+
+      const users = (usersRes.results || []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        phone: u.phone,
+        role: u.role,
+        canCollectAll: Boolean(u.can_collect_all),
+        canVerifyPayments: Boolean(u.can_verify_online),
+        isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
+        createdAt: u.created_at,
+      }));
+
+      const members = (membersRes.results || []).map((m: any) => ({
+        id: m.id,
+        code: m.code,
+        name: m.name,
+        phone: m.phone,
+        address: m.address || '',
+        dailyAmount: Number(m.daily_amount) || 0,
+        assignedCollectorId: m.assigned_collector_id || '',
+        uniqueToken: m.unique_token,
+        pin: m.pin || '1234',
+        isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
+        createdAt: m.created_at,
+      }));
+
+      const transactions = (txRes.results || []).map((t: any) => ({
+        id: t.id,
+        memberId: t.member_id,
+        collectorId: t.collector_id || null,
+        amount: Number(t.amount) || 0,
+        paymentMode: t.payment_mode,
+        status: t.status,
+        utrNumber: t.utr_number || undefined,
+        notes: t.notes || undefined,
+        collectionDate: t.collection_date,
+        createdAt: t.created_at,
+      }));
+
+      const settlements = (settlementsRes.results || []).map((s: any) => ({
+        id: s.id,
+        collectorId: s.collector_id,
+        settlementDate: s.settlement_date,
+        cashCollected: Number(s.cash_collected) || 0,
+        cashSubmitted: Number(s.cash_submitted) || 0,
+        status: s.status,
+        notes: s.notes || undefined,
+        approvedBy: s.approved_by || undefined,
+        approvedAt: s.approved_at || undefined,
+        createdAt: s.created_at,
+      }));
+
+      return jsonResponse({
+        settings: settingsRes.results || [],
+        users,
+        members,
+        transactions,
+        settlements,
+      });
+    }
+
     // 4. Save/Update Transaction
     if (path === 'transactions' && request.method === 'POST') {
       const body = await request.json();
       const { id, memberId, collectorId, amount, paymentMode, status, utrNumber, notes, collectionDate, createdAt } = body;
+
+      // Auto-create member in D1 if not existing
+      const memberExists = await env.DB.prepare('SELECT id FROM members WHERE id = ?').bind(memberId).first();
+      if (!memberExists) {
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO members (id, code, name, phone, address, daily_amount, unique_token, pin, is_active)
+          VALUES (?, ?, ?, ?, '', ?, ?, '1234', 1)
+        `).bind(
+          memberId,
+          body.memberCode || `AC-${memberId.replace('m-', '')}`,
+          body.memberName || 'Member',
+          body.memberPhone || '',
+          amount || 0,
+          `token-${memberId}`
+        ).run();
+      }
 
       await env.DB.prepare(`
         INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, status, utr_number, notes, collection_date, created_at)

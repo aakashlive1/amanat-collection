@@ -176,7 +176,7 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
                         : 'bg-slate-100 text-slate-700'
                     }`}
                   >
-                    {member.code.replace('AC-', '')}
+                    {member.code ? member.code.replace('AC-', '') : member.name?.charAt(0) || 'M'}
                   </div>
 
                   <div>

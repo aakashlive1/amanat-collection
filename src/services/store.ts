@@ -51,40 +51,78 @@ class DataStore {
 
   async syncWithCloud(): Promise<void> {
     try {
-      const res = await fetch('/api/bootstrap');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.users && Array.isArray(data.users) && data.users.length > 0) {
-          const mappedUsers = data.users.map((u: any) => ({
-            id: u.id,
-            name: u.name,
-            phone: u.phone,
-            role: u.role,
-            canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
-            canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
-            isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
-            createdAt: u.createdAt || u.created_at || new Date().toISOString(),
-          }));
-          this.set(STORAGE_KEYS.USERS, mappedUsers);
+      const localTransactions = this.getTransactions();
+      const localMembers = this.getMembers();
+
+      let data: any = null;
+      try {
+        const res = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            localTransactions: localTransactions.slice(0, 50),
+            localMembers: localMembers.slice(0, 50),
+          }),
+        });
+        if (res.ok) {
+          data = await res.json();
         }
-        if (data.members && Array.isArray(data.members) && data.members.length > 0) {
-          const mappedMembers = data.members.map((m: any) => ({
+      } catch {
+        // fall back to GET bootstrap
+      }
+
+      if (!data) {
+        const bootstrapRes = await fetch('/api/bootstrap').catch(() => null);
+        if (bootstrapRes && bootstrapRes.ok) {
+          data = await bootstrapRes.json();
+        }
+      }
+
+      if (!data) return;
+
+      if (data.users && Array.isArray(data.users) && data.users.length > 0) {
+        const mappedUsers = data.users.map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          phone: u.phone,
+          role: u.role,
+          canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
+          canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
+          isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
+          createdAt: u.createdAt || u.created_at || new Date().toISOString(),
+        }));
+        this.set(STORAGE_KEYS.USERS, mappedUsers);
+      }
+
+      if (data.members && Array.isArray(data.members) && data.members.length > 0) {
+        const memberMap = new Map<string, Member>();
+        data.members.forEach((m: any) => {
+          memberMap.set(m.id, {
             id: m.id,
-            code: m.code,
+            code: m.code || `AC-${m.id}`,
             name: m.name,
             phone: m.phone,
             address: m.address || '',
             dailyAmount: Number(m.dailyAmount ?? m.daily_amount) || 0,
             assignedCollectorId: m.assignedCollectorId || m.assigned_collector_id || '',
-            uniqueToken: m.uniqueToken || m.unique_token,
+            uniqueToken: m.uniqueToken || m.unique_token || `token-${m.id}`,
             pin: m.pin || '1234',
             isActive: m.isActive !== undefined ? Boolean(m.isActive) : Boolean(m.is_active ?? 1),
             createdAt: m.createdAt || m.created_at || new Date().toISOString(),
-          }));
-          this.set(STORAGE_KEYS.MEMBERS, mappedMembers);
-        }
-        if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
-          const mappedTx = data.transactions.map((t: any) => ({
+          });
+        });
+        localMembers.forEach(m => {
+          if (!memberMap.has(m.id)) {
+            memberMap.set(m.id, m);
+          }
+        });
+        this.set(STORAGE_KEYS.MEMBERS, Array.from(memberMap.values()));
+      }
+
+      if (data.transactions && Array.isArray(data.transactions)) {
+        const txMap = new Map<string, Transaction>();
+        data.transactions.forEach((t: any) => {
+          txMap.set(t.id, {
             id: t.id,
             memberId: t.memberId || t.member_id,
             collectorId: t.collectorId || t.collector_id || null,
@@ -95,24 +133,33 @@ class DataStore {
             notes: t.notes || undefined,
             collectionDate: t.collectionDate || t.collection_date,
             createdAt: t.createdAt || t.created_at,
-          }));
-          this.set(STORAGE_KEYS.TRANSACTIONS, mappedTx);
-        }
-        if (data.settlements && Array.isArray(data.settlements) && data.settlements.length > 0) {
-          const mappedSettlements = data.settlements.map((s: any) => ({
-            id: s.id,
-            collectorId: s.collectorId || s.collector_id,
-            settlementDate: s.settlementDate || s.settlement_date,
-            cashCollected: Number(s.cashCollected ?? s.cash_collected) || 0,
-            cashSubmitted: Number(s.cashSubmitted ?? s.cash_submitted) || 0,
-            status: s.status,
-            notes: s.notes || undefined,
-            approvedBy: s.approvedBy || s.approved_by || undefined,
-            approvedAt: s.approvedAt || s.approved_at || undefined,
-            createdAt: s.createdAt || s.created_at,
-          }));
-          this.set(STORAGE_KEYS.SETTLEMENTS, mappedSettlements);
-        }
+          });
+        });
+        localTransactions.forEach(t => {
+          if (!txMap.has(t.id)) {
+            txMap.set(t.id, t);
+          }
+        });
+        const mergedTxs = Array.from(txMap.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        this.set(STORAGE_KEYS.TRANSACTIONS, mergedTxs);
+      }
+
+      if (data.settlements && Array.isArray(data.settlements) && data.settlements.length > 0) {
+        const mappedSettlements = data.settlements.map((s: any) => ({
+          id: s.id,
+          collectorId: s.collectorId || s.collector_id,
+          settlementDate: s.settlementDate || s.settlement_date,
+          cashCollected: Number(s.cashCollected ?? s.cash_collected) || 0,
+          cashSubmitted: Number(s.cashSubmitted ?? s.cash_submitted) || 0,
+          status: s.status,
+          notes: s.notes || undefined,
+          approvedBy: s.approvedBy || s.approved_by || undefined,
+          approvedAt: s.approvedAt || s.approved_at || undefined,
+          createdAt: s.createdAt || s.created_at,
+        }));
+        this.set(STORAGE_KEYS.SETTLEMENTS, mappedSettlements);
       }
     } catch {
       // Offline mode

@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { store } from '../services/store';
 import { User } from '../types';
-import { ShieldCheck, UserCheck, LogOut, RotateCcw, Building2 } from 'lucide-react';
+import { ShieldCheck, UserCheck, LogOut, RotateCcw, Building2, RefreshCw, CloudCheck } from 'lucide-react';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -12,6 +12,13 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectUser }) => {
   const settings = store.getSettings();
   const allUsers = store.getUsers();
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    await store.syncWithCloud();
+    setTimeout(() => setIsSyncing(false), 600);
+  };
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
@@ -31,9 +38,20 @@ export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectU
           </div>
         </div>
 
-        {/* User Badge & Switcher for Easy Testing */}
+        {/* Cloud Sync & User Controls */}
         {currentUser && (
           <div className="flex items-center space-x-2">
+            {/* Live Cloud Sync Button */}
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              title="Sync with Cloudflare D1 Database"
+              className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold border border-emerald-200/60 transition active:scale-95"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
+            </button>
+
             {/* Quick Demo Switcher dropdown */}
             <div className="relative group">
               <button className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 transition text-xs font-semibold text-slate-700">

@@ -136,7 +136,7 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
           <div className="flex items-center space-x-3">
             <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-sm">
-              {member.code.replace('AC-', '')}
+              {member.code ? member.code.replace('AC-', '') : member.name?.charAt(0) || 'M'}
             </div>
             <div>
               <div className="flex items-center space-x-2">

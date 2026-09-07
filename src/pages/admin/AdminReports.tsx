@@ -595,7 +595,7 @@ export const AdminReports: React.FC = () => {
                 >
                   <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-xs">
-                      {member.code.replace('AC-', '')}
+                      {member.code ? member.code.replace('AC-', '') : member.name?.charAt(0) || 'M'}
                     </div>
                     <div>
                       <div className="flex items-center space-x-1.5">

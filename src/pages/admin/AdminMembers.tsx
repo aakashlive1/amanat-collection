@@ -122,7 +122,7 @@ export const AdminMembers: React.FC = () => {
                 >
                   <div className="flex items-start space-x-3">
                     <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 font-bold flex items-center justify-center shrink-0">
-                      {member.code.replace('AC-', '')}
+                      {member.code ? member.code.replace('AC-', '') : member.name?.charAt(0) || 'M'}
                     </div>
                     <div>
                       <div className="flex items-center space-x-2">
