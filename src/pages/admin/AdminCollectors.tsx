@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { store } from '../../services/store';
 import { User } from '../../types';
 import { CollectorModal } from '../../components/CollectorModal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { formatCurrency } from '../../utils/formatters';
 import {
   UserPlus,
   ShieldCheck,
   Lock,
   Edit2,
+  Trash2,
   CheckCircle2,
   XCircle,
   Banknote,
@@ -21,6 +23,7 @@ export const AdminCollectors: React.FC = () => {
   const members = store.getMembers();
   const [editingCollector, setEditingCollector] = useState<User | null | 'new'>(null);
   const [selectedStatementCollector, setSelectedStatementCollector] = useState<User | null>(null);
+  const [deletingCollector, setDeletingCollector] = useState<User | null>(null);
 
   const handleToggleCollectAll = (collectorId: string) => {
     store.toggleCollectorCanCollectAll(collectorId);
@@ -121,6 +124,14 @@ export const AdminCollectors: React.FC = () => {
                     title="Edit Collector"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={() => setDeletingCollector(collector)}
+                    className="p-1.5 text-red-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
+                    title="Delete Collector"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
@@ -235,6 +246,22 @@ export const AdminCollectors: React.FC = () => {
         <CollectorStatementModal
           collector={selectedStatementCollector}
           onClose={() => setSelectedStatementCollector(null)}
+        />
+      )}
+
+      {/* Delete Collector Confirmation Modal */}
+      {deletingCollector && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deletingCollector)}
+          title="Delete Collector"
+          itemName={deletingCollector.name}
+          itemDetails={`Phone: ${deletingCollector.phone} • Role: Collector`}
+          warningText="Are you sure you want to permanently delete this collector? Any members currently assigned to this collector will become unassigned. This action cannot be undone."
+          onClose={() => setDeletingCollector(null)}
+          onConfirm={() => {
+            store.deleteCollector(deletingCollector.id);
+            setDeletingCollector(null);
+          }}
         />
       )}
     </div>

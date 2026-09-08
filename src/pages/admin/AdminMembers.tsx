@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { store } from '../../services/store';
 import { Member } from '../../types';
 import { MemberModal } from '../../components/MemberModal';
+import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
 import { formatCurrency } from '../../utils/formatters';
 import {
   UserPlus,
@@ -9,6 +10,7 @@ import {
   ExternalLink,
   MessageSquare,
   Edit2,
+  Trash2,
   Copy,
   Check,
   CheckCircle2,
@@ -25,6 +27,7 @@ export const AdminMembers: React.FC = () => {
   const [collectorFilter, setCollectorFilter] = useState('');
   const [editingMember, setEditingMember] = useState<Member | null | 'new'>(null);
   const [selectedStatementMember, setSelectedStatementMember] = useState<Member | null>(null);
+  const [deletingMember, setDeletingMember] = useState<Member | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Filter members
@@ -217,6 +220,15 @@ export const AdminMembers: React.FC = () => {
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
+
+                    {/* Delete Member */}
+                    <button
+                      onClick={() => setDeletingMember(member)}
+                      className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-xl transition"
+                      title="Delete Member"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               );
@@ -240,6 +252,22 @@ export const AdminMembers: React.FC = () => {
         <MemberStatementModal
           member={selectedStatementMember}
           onClose={() => setSelectedStatementMember(null)}
+        />
+      )}
+
+      {/* Delete Member Confirmation Modal */}
+      {deletingMember && (
+        <DeleteConfirmModal
+          isOpen={Boolean(deletingMember)}
+          title="Delete Member"
+          itemName={deletingMember.name}
+          itemDetails={`Code: ${deletingMember.code} • Phone: ${deletingMember.phone} • Daily Amount: ${formatCurrency(deletingMember.dailyAmount)}`}
+          warningText="Are you sure you want to permanently delete this member? All associated collection transaction history for this member will also be removed from the system and cloud database. This action cannot be undone."
+          onClose={() => setDeletingMember(null)}
+          onConfirm={() => {
+            store.deleteMember(deletingMember.id);
+            setDeletingMember(null);
+          }}
         />
       )}
     </div>

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { store } from '../services/store';
-import { X } from 'lucide-react';
+import { X, Trash2 } from 'lucide-react';
+import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface CollectorModalProps {
   collector?: User | null;
@@ -19,6 +20,7 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
   const [canCollectAll, setCanCollectAll] = useState(collector?.canCollectAll ?? false);
   const [canVerifyPayments, setCanVerifyPayments] = useState(collector?.canVerifyPayments ?? false);
   const [isActive, setIsActive] = useState(collector?.isActive ?? true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,23 +144,54 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
             </label>
           </div>
 
-          <div className="flex items-center space-x-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="w-1/2 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="w-1/2 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 transition"
-            >
-              {collector ? 'Update Collector' : 'Create Collector'}
-            </button>
+          <div className="flex items-center justify-between space-x-2 pt-2">
+            {collector ? (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="py-2.5 px-3 bg-red-50 hover:bg-red-100 active:scale-[0.98] text-red-600 rounded-xl font-bold text-xs transition flex items-center space-x-1"
+                title="Delete Collector"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
+              </button>
+            ) : <div />}
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-200 transition"
+              >
+                {collector ? 'Update Collector' : 'Create Collector'}
+              </button>
+            </div>
           </div>
         </form>
       </div>
+
+      {/* Delete Collector Confirmation Modal */}
+      {collector && (
+        <DeleteConfirmModal
+          isOpen={showDeleteConfirm}
+          title="Delete Collector"
+          itemName={collector.name}
+          itemDetails={`Phone: ${collector.phone} • Role: Collector`}
+          warningText="Are you sure you want to permanently delete this collector? Any members currently assigned to this collector will become unassigned. This action cannot be undone."
+          onClose={() => setShowDeleteConfirm(false)}
+          onConfirm={() => {
+            store.deleteCollector(collector.id);
+            setShowDeleteConfirm(false);
+            onSuccess();
+          }}
+        />
+      )}
     </div>
   );
 };

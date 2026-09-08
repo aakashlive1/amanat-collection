@@ -42,6 +42,15 @@ export const onRequest = async (context: any) => {
   }
 
   try {
+    // Ensure deleted_records table exists
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS deleted_records (
+        id TEXT PRIMARY KEY, 
+        record_type TEXT NOT NULL, 
+        deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run().catch(() => {});
+
     // 1. Health Check
     if (path === 'health') {
       return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
@@ -55,6 +64,7 @@ export const onRequest = async (context: any) => {
         `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT, daily_amount REAL NOT NULL DEFAULT 0, assigned_collector_id TEXT, unique_token TEXT UNIQUE NOT NULL, pin TEXT NOT NULL DEFAULT '1234', is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS cash_settlements (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, settlement_date TEXT NOT NULL, cash_collected REAL NOT NULL, cash_submitted REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'discrepancy')), notes TEXT, approved_by TEXT, approved_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS deleted_records (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE INDEX IF NOT EXISTS idx_members_code ON members(code);`,
         `CREATE INDEX IF NOT EXISTS idx_members_token ON members(unique_token);`,
         `CREATE INDEX IF NOT EXISTS idx_transactions_member ON transactions(member_id);`,
@@ -117,39 +127,49 @@ export const onRequest = async (context: any) => {
 
     // 3. Full Data Bootstrap (Sync on App Load)
     if (path === 'bootstrap' && request.method === 'GET') {
-      const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([
+      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
         env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
+        env.DB.prepare('SELECT id, record_type FROM deleted_records').all().catch(() => ({ results: [] })),
       ]);
 
-      const users = (usersRes.results || []).map((u: any) => ({
-        id: u.id,
-        name: u.name,
-        phone: u.phone,
-        role: u.role,
-        password: u.password_hash,
-        canCollectAll: Boolean(u.can_collect_all),
-        canVerifyPayments: Boolean(u.can_verify_online),
-        isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
-        createdAt: u.created_at,
-      }));
+      const deletedMemberIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'member').map((r: any) => r.id);
+      const deletedUserIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'user').map((r: any) => r.id);
+      const deletedMemberSet = new Set(deletedMemberIds);
+      const deletedUserSet = new Set(deletedUserIds);
 
-      const members = (membersRes.results || []).map((m: any) => ({
-        id: m.id,
-        code: m.code,
-        name: m.name,
-        phone: m.phone,
-        address: m.address || '',
-        dailyAmount: Number(m.daily_amount) || 0,
-        assignedCollectorId: m.assigned_collector_id || '',
-        uniqueToken: m.unique_token,
-        pin: m.pin || '1234',
-        isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
-        createdAt: m.created_at,
-      }));
+      const users = (usersRes.results || [])
+        .filter((u: any) => !deletedUserSet.has(u.id))
+        .map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          phone: u.phone,
+          role: u.role,
+          password: u.password_hash,
+          canCollectAll: Boolean(u.can_collect_all),
+          canVerifyPayments: Boolean(u.can_verify_online),
+          isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
+          createdAt: u.created_at,
+        }));
+
+      const members = (membersRes.results || [])
+        .filter((m: any) => !deletedMemberSet.has(m.id))
+        .map((m: any) => ({
+          id: m.id,
+          code: m.code,
+          name: m.name,
+          phone: m.phone,
+          address: m.address || '',
+          dailyAmount: Number(m.daily_amount) || 0,
+          assignedCollectorId: m.assigned_collector_id || '',
+          uniqueToken: m.unique_token,
+          pin: m.pin || '1234',
+          isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
+          createdAt: m.created_at,
+        }));
 
       const transactions = (txRes.results || []).map((t: any) => ({
         id: t.id,
@@ -183,19 +203,41 @@ export const onRequest = async (context: any) => {
         members,
         transactions,
         settlements,
+        deletedMemberIds,
+        deletedUserIds,
       });
     }
 
     // 3.5. Two-Way Sync Endpoint (Pushes unsynced local data and pulls latest cloud state)
     if (path === 'sync' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
-      const { localTransactions, localMembers } = body as any;
+      const { localTransactions, localMembers, deletedMemberIds: clientDelMembers, deletedUserIds: clientDelUsers } = body as any;
 
-      // Upsert any local members if sent
+      // Handle client deletions first
+      if (Array.isArray(clientDelMembers) && clientDelMembers.length > 0) {
+        for (const id of clientDelMembers) {
+          await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "member")').bind(id).run().catch(() => {});
+          await env.DB.prepare('DELETE FROM transactions WHERE member_id = ?').bind(id).run().catch(() => {});
+          await env.DB.prepare('DELETE FROM members WHERE id = ?').bind(id).run().catch(() => {});
+        }
+      }
+
+      if (Array.isArray(clientDelUsers) && clientDelUsers.length > 0) {
+        for (const id of clientDelUsers) {
+          await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "user")').bind(id).run().catch(() => {});
+          await env.DB.prepare('UPDATE members SET assigned_collector_id = NULL WHERE assigned_collector_id = ?').bind(id).run().catch(() => {});
+          await env.DB.prepare('DELETE FROM users WHERE id = ? AND role != "admin"').bind(id).run().catch(() => {});
+        }
+      }
+
+      // Upsert any local members if sent (and not deleted)
       if (Array.isArray(localMembers) && localMembers.length > 0) {
         for (const m of localMembers) {
           try {
             if (m.name && m.name !== 'Member') {
+              const isDeleted = await env.DB.prepare('SELECT 1 FROM deleted_records WHERE id = ?').bind(m.id).first().catch(() => null);
+              if (isDeleted) continue;
+
               await env.DB.prepare(`
                 INSERT INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -263,39 +305,49 @@ export const onRequest = async (context: any) => {
       await env.DB.prepare("UPDATE members SET name = 'Vikram Rathore' WHERE name = 'Member' AND (id = 'm-6' OR code = 'AC-106')").run().catch(() => {});
 
       // Fetch and return full latest cloud state
-      const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([
+      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
         env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
+        env.DB.prepare('SELECT id, record_type FROM deleted_records').all().catch(() => ({ results: [] })),
       ]);
 
-      const users = (usersRes.results || []).map((u: any) => ({
-        id: u.id,
-        name: u.name,
-        phone: u.phone,
-        role: u.role,
-        password: u.password_hash,
-        canCollectAll: Boolean(u.can_collect_all),
-        canVerifyPayments: Boolean(u.can_verify_online),
-        isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
-        createdAt: u.created_at,
-      }));
+      const deletedMemberIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'member').map((r: any) => r.id);
+      const deletedUserIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'user').map((r: any) => r.id);
+      const deletedMemberSet = new Set(deletedMemberIds);
+      const deletedUserSet = new Set(deletedUserIds);
 
-      const members = (membersRes.results || []).map((m: any) => ({
-        id: m.id,
-        code: m.code,
-        name: m.name,
-        phone: m.phone,
-        address: m.address || '',
-        dailyAmount: Number(m.daily_amount) || 0,
-        assignedCollectorId: m.assigned_collector_id || '',
-        uniqueToken: m.unique_token,
-        pin: m.pin || '1234',
-        isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
-        createdAt: m.created_at,
-      }));
+      const users = (usersRes.results || [])
+        .filter((u: any) => !deletedUserSet.has(u.id))
+        .map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          phone: u.phone,
+          role: u.role,
+          password: u.password_hash,
+          canCollectAll: Boolean(u.can_collect_all),
+          canVerifyPayments: Boolean(u.can_verify_online),
+          isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
+          createdAt: u.created_at,
+        }));
+
+      const members = (membersRes.results || [])
+        .filter((m: any) => !deletedMemberSet.has(m.id))
+        .map((m: any) => ({
+          id: m.id,
+          code: m.code,
+          name: m.name,
+          phone: m.phone,
+          address: m.address || '',
+          dailyAmount: Number(m.daily_amount) || 0,
+          assignedCollectorId: m.assigned_collector_id || '',
+          uniqueToken: m.unique_token,
+          pin: m.pin || '1234',
+          isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
+          createdAt: m.created_at,
+        }));
 
       const transactions = (txRes.results || []).map((t: any) => ({
         id: t.id,
@@ -329,6 +381,8 @@ export const onRequest = async (context: any) => {
         members,
         transactions,
         settlements,
+        deletedMemberIds,
+        deletedUserIds,
       });
     }
 
@@ -423,6 +477,22 @@ export const onRequest = async (context: any) => {
       return jsonResponse({ success: true, id });
     }
 
+    // 6.1. Delete Member
+    if (path === 'members' && request.method === 'DELETE') {
+      let id = url.searchParams.get('id');
+      if (!id) {
+        const body = await request.json().catch(() => ({}));
+        id = body.id;
+      }
+      if (!id) return jsonResponse({ error: 'Member id is required' }, 400);
+
+      await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "member")').bind(id).run().catch(() => {});
+      await env.DB.prepare('DELETE FROM transactions WHERE member_id = ?').bind(id).run().catch(() => {});
+      await env.DB.prepare('DELETE FROM members WHERE id = ?').bind(id).run().catch(() => {});
+
+      return jsonResponse({ success: true, message: 'Member deleted successfully', id });
+    }
+
     // 7. Save/Update Cash Settlement
     if (path === 'settlements' && request.method === 'POST') {
       const body = await request.json();
@@ -481,6 +551,27 @@ export const onRequest = async (context: any) => {
       ).run();
 
       return jsonResponse({ success: true, id });
+    }
+
+    // 8.1. Delete Collector / User
+    if (path === 'users' && request.method === 'DELETE') {
+      let id = url.searchParams.get('id');
+      if (!id) {
+        const body = await request.json().catch(() => ({}));
+        id = body.id;
+      }
+      if (!id) return jsonResponse({ error: 'User id is required' }, 400);
+
+      const target = await env.DB.prepare('SELECT role FROM users WHERE id = ?').bind(id).first().catch(() => null);
+      if (target && target.role === 'admin') {
+        return jsonResponse({ error: 'Super Admin account cannot be deleted' }, 400);
+      }
+
+      await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "user")').bind(id).run().catch(() => {});
+      await env.DB.prepare('UPDATE members SET assigned_collector_id = NULL WHERE assigned_collector_id = ?').bind(id).run().catch(() => {});
+      await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run().catch(() => {});
+
+      return jsonResponse({ success: true, message: 'Collector deleted successfully', id });
     }
 
     return jsonResponse({ error: `Endpoint /api/${path} not found` }, 404);

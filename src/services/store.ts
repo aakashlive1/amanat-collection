@@ -15,6 +15,8 @@ const STORAGE_KEYS = {
   TRANSACTIONS: 'amanat_transactions',
   SETTLEMENTS: 'amanat_settlements',
   AUTH_USER: 'amanat_auth_user',
+  DELETED_MEMBER_IDS: 'amanat_deleted_member_ids',
+  DELETED_USER_IDS: 'amanat_deleted_user_ids',
 };
 
 class DataStore {
@@ -49,6 +51,40 @@ class DataStore {
     }
   }
 
+  private async deleteApi(endpoint: string, data: unknown) {
+    try {
+      await fetch(`/api/${endpoint}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch {
+      // Offline fallback
+    }
+  }
+
+  getDeletedMemberIds(): string[] {
+    return this.get<string[]>(STORAGE_KEYS.DELETED_MEMBER_IDS, []);
+  }
+
+  getDeletedUserIds(): string[] {
+    return this.get<string[]>(STORAGE_KEYS.DELETED_USER_IDS, []);
+  }
+
+  private addDeletedMemberId(id: string): void {
+    const list = this.getDeletedMemberIds();
+    if (!list.includes(id)) {
+      this.set(STORAGE_KEYS.DELETED_MEMBER_IDS, [...list, id]);
+    }
+  }
+
+  private addDeletedUserId(id: string): void {
+    const list = this.getDeletedUserIds();
+    if (!list.includes(id)) {
+      this.set(STORAGE_KEYS.DELETED_USER_IDS, [...list, id]);
+    }
+  }
+
   async syncWithCloud(): Promise<void> {
     try {
       const localTransactions = this.getTransactions();
@@ -62,6 +98,8 @@ class DataStore {
           body: JSON.stringify({
             localTransactions: localTransactions.slice(0, 50),
             localMembers: localMembers.slice(0, 50),
+            deletedMemberIds: this.getDeletedMemberIds(),
+            deletedUserIds: this.getDeletedUserIds(),
           }),
         });
         if (res.ok) {
@@ -80,30 +118,43 @@ class DataStore {
 
       if (!data) return;
 
-      if (data.users && Array.isArray(data.users) && data.users.length > 0) {
-        const mappedUsers = data.users.map((u: any) => ({
-          id: u.id,
-          name: u.name,
-          phone: u.phone,
-          role: u.role,
-          password: u.password || u.password_hash || (u.role === 'admin' ? 'admin123' : 'coll123'),
-          canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
-          canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
-          isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
-          createdAt: u.createdAt || u.created_at || new Date().toISOString(),
-        }));
+      // Merge server deleted lists
+      if (Array.isArray(data.deletedMemberIds)) {
+        data.deletedMemberIds.forEach((id: string) => this.addDeletedMemberId(id));
+      }
+      if (Array.isArray(data.deletedUserIds)) {
+        data.deletedUserIds.forEach((id: string) => this.addDeletedUserId(id));
+      }
+      const deletedMemberSet = new Set(this.getDeletedMemberIds());
+      const deletedUserSet = new Set(this.getDeletedUserIds());
+
+      if (data.users && Array.isArray(data.users)) {
+        const mappedUsers = data.users
+          .filter((u: any) => !deletedUserSet.has(u.id))
+          .map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            phone: u.phone,
+            role: u.role,
+            password: u.password || u.password_hash || (u.role === 'admin' ? 'admin123' : 'coll123'),
+            canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
+            canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
+            isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
+            createdAt: u.createdAt || u.created_at || new Date().toISOString(),
+          }));
         this.set(STORAGE_KEYS.USERS, mappedUsers);
       }
 
-      if (data.members && Array.isArray(data.members) && data.members.length > 0) {
+      if (data.members && Array.isArray(data.members)) {
         const memberMap = new Map<string, Member>();
-        // First populate with local members to preserve real names
+        // First populate with non-deleted local members to preserve real names
         localMembers.forEach(m => {
-          if (m.name && m.name !== 'Member') {
+          if (m.name && m.name !== 'Member' && !deletedMemberSet.has(m.id)) {
             memberMap.set(m.id, m);
           }
         });
         data.members.forEach((m: any) => {
+          if (deletedMemberSet.has(m.id)) return;
           const existing = memberMap.get(m.id);
           const initialFallback = INITIAL_MEMBERS.find(im => im.id === m.id || im.code === m.code);
           const validName = (m.name && m.name !== 'Member')
@@ -125,7 +176,7 @@ class DataStore {
           });
         });
         localMembers.forEach(m => {
-          if (!memberMap.has(m.id)) {
+          if (!memberMap.has(m.id) && !deletedMemberSet.has(m.id)) {
             memberMap.set(m.id, m);
           }
         });
@@ -299,10 +350,11 @@ class DataStore {
 
   saveCollector(collector: Partial<User> & { name: string; phone: string }): User {
     const users = this.getUsers();
+    let savedUser: User;
     if (collector.id) {
       const updated = users.map(u => (u.id === collector.id ? { ...u, ...collector } as User : u));
       this.set(STORAGE_KEYS.USERS, updated);
-      return updated.find(u => u.id === collector.id)!;
+      savedUser = updated.find(u => u.id === collector.id)!;
     } else {
       const newUser: User = {
         id: `u-coll-${Date.now()}`,
@@ -315,8 +367,51 @@ class DataStore {
         createdAt: new Date().toISOString(),
       };
       this.set(STORAGE_KEYS.USERS, [newUser, ...users]);
-      return newUser;
+      savedUser = newUser;
     }
+
+    // Immediately push to cloud backend
+    this.postApi('users', {
+      id: savedUser.id,
+      name: savedUser.name,
+      phone: savedUser.phone,
+      role: savedUser.role,
+      password: savedUser.password || 'coll123',
+      canCollectAll: savedUser.canCollectAll,
+      canVerifyOnline: savedUser.canVerifyPayments,
+      isActive: savedUser.isActive,
+    });
+
+    return savedUser;
+  }
+
+  deleteCollector(id: string): { success: boolean; message: string } {
+    const users = this.getUsers();
+    const target = users.find(u => u.id === id);
+    if (!target) {
+      return { success: false, message: 'Collector not found' };
+    }
+    if (target.role === 'admin') {
+      return { success: false, message: 'Super Admin account cannot be deleted' };
+    }
+
+    const updatedUsers = users.filter(u => u.id !== id);
+    this.set(STORAGE_KEYS.USERS, updatedUsers);
+
+    // Unassign this collector from members
+    const members = this.getMembers();
+    const updatedMembers = members.map(m =>
+      m.assignedCollectorId === id ? { ...m, assignedCollectorId: '' } : m
+    );
+    this.set(STORAGE_KEYS.MEMBERS, updatedMembers);
+
+    // Track in deleted IDs
+    this.addDeletedUserId(id);
+
+    // Sync deletion to cloud D1
+    this.deleteApi('users', { id });
+
+    return { success: true, message: 'Collector deleted successfully' };
   }
 
   toggleCollectorStatus(id: string): void {
@@ -352,10 +447,11 @@ class DataStore {
 
   saveMember(memberData: Partial<Member> & { name: string; phone: string; dailyAmount: number }): Member {
     const members = this.getMembers();
+    let savedMember: Member;
     if (memberData.id) {
       const updated = members.map(m => (m.id === memberData.id ? { ...m, ...memberData } as Member : m));
       this.set(STORAGE_KEYS.MEMBERS, updated);
-      return updated.find(m => m.id === memberData.id)!;
+      savedMember = updated.find(m => m.id === memberData.id)!;
     } else {
       // Auto-generate code if not provided
       const nextCodeNumber = members.length + 101;
@@ -376,8 +472,43 @@ class DataStore {
         createdAt: new Date().toISOString(),
       };
       this.set(STORAGE_KEYS.MEMBERS, [newMember, ...members]);
-      return newMember;
+      savedMember = newMember;
     }
+
+    // Immediately push to cloud backend
+    this.postApi('members', {
+      id: savedMember.id,
+      code: savedMember.code,
+      name: savedMember.name,
+      phone: savedMember.phone,
+      address: savedMember.address,
+      dailyAmount: savedMember.dailyAmount,
+      assignedCollectorId: savedMember.assignedCollectorId,
+      uniqueToken: savedMember.uniqueToken,
+      pin: savedMember.pin,
+      isActive: savedMember.isActive,
+    });
+
+    return savedMember;
+  }
+
+  deleteMember(id: string): { success: boolean; message: string } {
+    const members = this.getMembers();
+    const updatedMembers = members.filter(m => m.id !== id);
+    this.set(STORAGE_KEYS.MEMBERS, updatedMembers);
+
+    // Also remove any transactions for this member
+    const transactions = this.getTransactions();
+    const updatedTransactions = transactions.filter(t => t.memberId !== id);
+    this.set(STORAGE_KEYS.TRANSACTIONS, updatedTransactions);
+
+    // Track in deleted IDs
+    this.addDeletedMemberId(id);
+
+    // Sync deletion to cloud D1
+    this.deleteApi('members', { id });
+
+    return { success: true, message: 'Member deleted successfully' };
   }
 
   updateMemberDailyAmount(id: string, newAmount: number): void {
