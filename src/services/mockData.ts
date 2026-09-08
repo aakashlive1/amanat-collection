@@ -15,6 +15,7 @@ export const INITIAL_USERS: User[] = [
     name: 'Amanat Super Admin',
     phone: '9876543210',
     role: 'admin',
+    password: 'admin123',
     canCollectAll: true,
     canVerifyPayments: true,
     isActive: true,
@@ -25,6 +26,7 @@ export const INITIAL_USERS: User[] = [
     name: 'Rajesh Kumar',
     phone: '9822011111',
     role: 'collector',
+    password: 'coll123',
     canCollectAll: true, // Super Admin granted all-members access
     canVerifyPayments: true, // Super Admin granted online verification rights
     isActive: true,
@@ -35,6 +37,7 @@ export const INITIAL_USERS: User[] = [
     name: 'Vikram Singh',
     phone: '9822022222',
     role: 'collector',
+    password: 'coll123',
     canCollectAll: false, // Only assigned members
     canVerifyPayments: false, // Cannot verify online payments
     isActive: true,

@@ -119,7 +119,7 @@ export const onRequest = async (context: any) => {
     if (path === 'bootstrap' && request.method === 'GET') {
       const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
-        env.DB.prepare('SELECT id, name, phone, role, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
+        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
@@ -130,6 +130,7 @@ export const onRequest = async (context: any) => {
         name: u.name,
         phone: u.phone,
         role: u.role,
+        password: u.password_hash,
         canCollectAll: Boolean(u.can_collect_all),
         canVerifyPayments: Boolean(u.can_verify_online),
         isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
@@ -264,7 +265,7 @@ export const onRequest = async (context: any) => {
       // Fetch and return full latest cloud state
       const [settingsRes, usersRes, membersRes, txRes, settlementsRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
-        env.DB.prepare('SELECT id, name, phone, role, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
+        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
@@ -275,6 +276,7 @@ export const onRequest = async (context: any) => {
         name: u.name,
         phone: u.phone,
         role: u.role,
+        password: u.password_hash,
         canCollectAll: Boolean(u.can_collect_all),
         canVerifyPayments: Boolean(u.can_verify_online),
         isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
@@ -463,6 +465,7 @@ export const onRequest = async (context: any) => {
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           phone = excluded.phone,
+          password_hash = CASE WHEN excluded.password_hash != '' THEN excluded.password_hash ELSE users.password_hash END,
           can_collect_all = excluded.can_collect_all,
           can_verify_online = excluded.can_verify_online,
           is_active = excluded.is_active

@@ -52,62 +52,27 @@ export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectU
               <span className="hidden sm:inline">{isSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
             </button>
 
-            {/* Quick Demo Switcher dropdown */}
-            <div className="relative group">
-              <button className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 transition text-xs font-semibold text-slate-700">
-                {currentUser.role === 'admin' ? (
-                  <ShieldCheck className="w-4 h-4 text-purple-600" />
-                ) : (
-                  <UserCheck className="w-4 h-4 text-emerald-600" />
-                )}
-                <span className="max-w-[100px] truncate">{currentUser.name}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-slate-600 font-bold uppercase">
-                  {currentUser.role === 'admin' ? 'Admin' : 'Collector'}
-                </span>
-              </button>
-
-              {/* Quick switch menu on hover/click */}
-              <div className="absolute right-0 mt-1 w-56 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 hidden group-hover:block group-focus-within:block z-50">
-                <div className="px-2.5 py-1 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  Switch Account (Quick Test)
-                </div>
-                {allUsers.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => onSelectUser(u)}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                      currentUser.id === u.id ? 'bg-emerald-50 text-emerald-800 font-bold' : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <span className="truncate">{u.name}</span>
-                    <span className="text-[10px] uppercase text-slate-500 font-mono">
-                      {u.role === 'admin' ? 'Admin' : u.canCollectAll ? 'All' : 'Assigned'}
-                    </span>
-                  </button>
-                ))}
-                <div className="border-t border-slate-100 my-1"></div>
-                <button
-                  onClick={() => {
-                    if (confirm('Are you sure you want to reset all demo data to default?')) {
-                      store.resetToDemo();
-                      window.location.reload();
-                    }
-                  }}
-                  className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium text-amber-700 hover:bg-amber-50 flex items-center space-x-1.5"
-                >
-                  <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Reset Demo Data</span>
-                </button>
-              </div>
+            {/* User Badge */}
+            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold text-slate-700">
+              {currentUser.role === 'admin' ? (
+                <ShieldCheck className="w-4 h-4 text-purple-600" />
+              ) : (
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+              )}
+              <span className="max-w-[120px] truncate">{currentUser.name}</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-white text-slate-600 font-bold uppercase">
+                {currentUser.role === 'admin' ? 'Admin' : 'Collector'}
+              </span>
             </div>
 
             {/* Logout */}
             <button
               onClick={onLogout}
-              title="Logout"
-              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+              title="Sign Out"
+              className="flex items-center space-x-1 p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
+              <span className="text-xs font-bold text-slate-600 hover:text-rose-600 hidden sm:inline">Logout</span>
             </button>
           </div>
         )}

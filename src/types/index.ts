@@ -5,6 +5,7 @@ export interface User {
   name: string;
   phone: string;
   role: UserRole;
+  password?: string;
   canCollectAll: boolean; // if true, can collect from any member; if false, only assigned members
   canVerifyPayments: boolean; // if true, Super Admin has allowed this collector to verify/approve online UPI payments
   isActive: boolean;

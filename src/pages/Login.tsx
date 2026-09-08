@@ -10,38 +10,36 @@ interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const settings = store.getSettings();
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
-  const [phone, setPhone] = useState('9876543210');
-  const [password, setPassword] = useState('admin123');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
     setError('');
-    if (role === 'admin') {
-      setPhone('9876543210');
-      setPassword('admin123');
-    } else {
-      setPhone('9822011111');
-      setPassword('coll123');
-    }
+    setPhone('');
+    setPassword('');
   };
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    const user = store.login(phone, selectedRole);
+    if (!phone.trim()) {
+      setError('Please enter your mobile number.');
+      return;
+    }
+
+    if (!password.trim()) {
+      setError('Please enter your password.');
+      return;
+    }
+
+    const user = store.login(phone, password, selectedRole);
     if (user) {
       onLoginSuccess(user);
     } else {
       setError('Invalid mobile number or password, or account is inactive.');
-    }
-  };
-
-  const handleQuickLogin = (targetPhone: string, role: UserRole) => {
-    const user = store.login(targetPhone, role);
-    if (user) {
-      onLoginSuccess(user);
     }
   };
 
@@ -109,7 +107,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 required
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
-                placeholder="10-digit mobile number"
+                placeholder="Enter 10-digit mobile number"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden transition"
               />
             </div>
@@ -117,7 +115,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              Password / PIN
+              Password
             </label>
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -126,7 +124,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 required
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="Enter your password"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden transition"
               />
             </div>
@@ -134,42 +132,12 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
           <button
             type="submit"
-            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 transition flex items-center justify-center space-x-2"
+            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 transition flex items-center justify-center space-x-2 cursor-pointer"
           >
-            <span>Sign In</span>
+            <span>Sign In Securely</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
-
-        {/* 1-Tap Quick Demo Logins for Fast Evaluation */}
-        <div className="mt-6 pt-5 border-t border-slate-100">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center mb-2.5">
-            ⚡ Quick 1-Tap Demo Login (Evaluation)
-          </p>
-          <div className="space-y-1.5">
-            <button
-              onClick={() => handleQuickLogin('9876543210', 'admin')}
-              className="w-full py-2 px-3 bg-purple-50 hover:bg-purple-100 text-purple-900 rounded-xl text-xs font-bold flex items-center justify-between transition"
-            >
-              <span>👑 Super Admin</span>
-              <span className="text-[10px] text-purple-600">Login ➜</span>
-            </button>
-            <button
-              onClick={() => handleQuickLogin('9822011111', 'collector')}
-              className="w-full py-2 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between transition"
-            >
-              <span>🛵 Rajesh Kumar (All Members Collector)</span>
-              <span className="text-[10px] text-emerald-600">Login ➜</span>
-            </button>
-            <button
-              onClick={() => handleQuickLogin('9822022222', 'collector')}
-              className="w-full py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-900 rounded-xl text-xs font-bold flex items-center justify-between transition"
-            >
-              <span>🚶‍♂️ Vikram Singh (Assigned Only Collector)</span>
-              <span className="text-[10px] text-blue-600">Login ➜</span>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

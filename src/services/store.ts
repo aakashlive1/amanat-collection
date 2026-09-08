@@ -86,6 +86,7 @@ class DataStore {
           name: u.name,
           phone: u.phone,
           role: u.role,
+          password: u.password || u.password_hash || (u.role === 'admin' ? 'admin123' : 'coll123'),
           canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
           canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
           isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
@@ -187,19 +188,30 @@ class DataStore {
     this.set(STORAGE_KEYS.AUTH_USER, user);
   }
 
-  login(phone: string, role?: 'admin' | 'collector'): User | null {
+  login(phone: string, password?: string, role?: 'admin' | 'collector'): User | null {
     const users = this.getUsers();
     const cleanPhone = phone.trim();
+    const cleanPassword = password ? password.trim() : '';
+
     const user = users.find(u => {
       const active = u.isActive !== undefined ? Boolean(u.isActive) : Boolean((u as any).is_active ?? 1);
-      return u.phone === cleanPhone && (!role || u.role === role) && active;
+      const phoneMatch = u.phone === cleanPhone;
+      const roleMatch = !role || u.role === role;
+      return phoneMatch && roleMatch && active;
     });
+
     if (user) {
+      // If password provided, verify it
+      if (cleanPassword && user.password && user.password !== cleanPassword) {
+        return null;
+      }
+
       const sanitizedUser: User = {
         id: user.id,
         name: user.name,
         phone: user.phone,
         role: user.role,
+        password: user.password,
         canCollectAll: user.canCollectAll !== undefined ? Boolean(user.canCollectAll) : Boolean((user as any).can_collect_all),
         canVerifyPayments: user.canVerifyPayments !== undefined ? Boolean(user.canVerifyPayments) : Boolean((user as any).can_verify_online),
         isActive: true,
@@ -209,6 +221,55 @@ class DataStore {
       return sanitizedUser;
     }
     return null;
+  }
+
+  updateAdminCredentials(data: {
+    phone: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }): { success: boolean; message: string } {
+    const users = this.getUsers();
+    const admin = users.find(u => u.role === 'admin');
+    if (!admin) {
+      return { success: false, message: 'Super admin account not found.' };
+    }
+
+    const currentSavedPass = admin.password || 'admin123';
+    if (data.currentPassword && data.currentPassword.trim() !== currentSavedPass) {
+      return { success: false, message: 'Current password does not match.' };
+    }
+
+    const updatedPhone = data.phone.trim() || admin.phone;
+    const updatedPassword = data.newPassword?.trim() ? data.newPassword.trim() : currentSavedPass;
+
+    const updatedAdmin: User = {
+      ...admin,
+      phone: updatedPhone,
+      password: updatedPassword,
+    };
+
+    const updatedUsers = users.map(u => (u.id === admin.id ? updatedAdmin : u));
+    this.set(STORAGE_KEYS.USERS, updatedUsers);
+
+    // Update active auth user session
+    const currentAuth = this.getAuthUser();
+    if (currentAuth && currentAuth.role === 'admin') {
+      this.setAuthUser(updatedAdmin);
+    }
+
+    // Push to Cloudflare D1 immediately
+    this.postApi('users', {
+      id: updatedAdmin.id,
+      name: updatedAdmin.name,
+      phone: updatedAdmin.phone,
+      role: 'admin',
+      password: updatedPassword,
+      canCollectAll: true,
+      canVerifyOnline: true,
+      isActive: true,
+    });
+
+    return { success: true, message: 'Super Admin credentials updated and synced to cloud successfully!' };
   }
 
   logout(): void {
