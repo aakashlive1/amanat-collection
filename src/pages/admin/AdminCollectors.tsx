@@ -10,7 +10,6 @@ import {
   Lock,
   Edit2,
   Trash2,
-  KeyRound,
   CheckCircle2,
   XCircle,
   Banknote,
@@ -82,16 +81,9 @@ export const AdminCollectors: React.FC = () => {
                     <h3 className="text-sm font-black text-slate-900 leading-tight">
                       {collector.name}
                     </h3>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5">
-                      <span className="text-xs text-slate-500 font-medium">
-                        📞 {collector.phone}
-                      </span>
-                      <span className="text-slate-300">•</span>
-                      <span className="inline-flex items-center space-x-1 text-[11px] font-mono font-bold bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-md border border-purple-100">
-                        <KeyRound className="w-3 h-3 text-purple-500" />
-                        <span>Pass: {collector.password || 'coll123'}</span>
-                      </span>
-                    </div>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      📞 {collector.phone}
+                    </p>
                   </div>
                 </div>
 

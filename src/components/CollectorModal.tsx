@@ -17,7 +17,7 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
 }) => {
   const [name, setName] = useState(collector?.name || '');
   const [phone, setPhone] = useState(collector?.phone || '');
-  const [password, setPassword] = useState(collector?.password || '');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [canCollectAll, setCanCollectAll] = useState(collector?.canCollectAll ?? false);
   const [canVerifyPayments, setCanVerifyPayments] = useState(collector?.canVerifyPayments ?? false);
@@ -101,11 +101,11 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs font-bold text-slate-700">
-                {collector ? 'Collector Login Password' : 'Collector Login Password *'}
+                {collector ? 'Reset / Change Password' : 'Collector Login Password *'}
               </label>
               {collector && (
                 <span className="text-[10px] text-slate-400 font-medium">
-                  (Leave blank to keep existing)
+                  (Optional - leave blank to keep current)
                 </span>
               )}
             </div>
@@ -116,7 +116,7 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
                 required={!collector}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder={collector ? 'Enter new password to update' : 'Min 4 characters (e.g. coll123)'}
+                placeholder={collector ? 'Enter new password to reset' : 'Min 4 characters (e.g. coll123)'}
                 className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden"
               />
               <button
@@ -129,7 +129,9 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
               </button>
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              Collector will use their mobile number and this password to log in.
+              {collector
+                ? 'Only enter a new password if you wish to reset or change it.'
+                : 'Collector will use their mobile number and this password to log in.'}
             </p>
           </div>
 
