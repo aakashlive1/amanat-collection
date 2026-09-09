@@ -528,14 +528,15 @@ export const onRequest = async (context: any) => {
     if (path === 'users' && request.method === 'POST') {
       const body = await request.json();
       const { id, name, phone, role, password, canCollectAll, canVerifyOnline, isActive } = body;
+      const cleanPassword = password ? String(password).trim() : '';
 
       await env.DB.prepare(`
         INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'coll123'), ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           phone = excluded.phone,
-          password_hash = CASE WHEN excluded.password_hash != '' THEN excluded.password_hash ELSE users.password_hash END,
+          password_hash = CASE WHEN excluded.password_hash != '' AND excluded.password_hash IS NOT NULL THEN excluded.password_hash ELSE users.password_hash END,
           can_collect_all = excluded.can_collect_all,
           can_verify_online = excluded.can_verify_online,
           is_active = excluded.is_active
@@ -544,7 +545,7 @@ export const onRequest = async (context: any) => {
         name,
         phone,
         role || 'collector',
-        password || 'coll123',
+        cleanPassword,
         canCollectAll ? 1 : 0,
         canVerifyOnline ? 1 : 0,
         isActive === undefined ? 1 : (isActive ? 1 : 0)

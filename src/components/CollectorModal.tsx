@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { store } from '../services/store';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 
 interface CollectorModalProps {
@@ -17,6 +17,8 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
 }) => {
   const [name, setName] = useState(collector?.name || '');
   const [phone, setPhone] = useState(collector?.phone || '');
+  const [password, setPassword] = useState(collector?.password || '');
+  const [showPassword, setShowPassword] = useState(false);
   const [canCollectAll, setCanCollectAll] = useState(collector?.canCollectAll ?? false);
   const [canVerifyPayments, setCanVerifyPayments] = useState(collector?.canVerifyPayments ?? false);
   const [isActive, setIsActive] = useState(collector?.isActive ?? true);
@@ -29,10 +31,21 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
       return;
     }
 
+    if (!collector && (!password.trim() || password.trim().length < 4)) {
+      alert('Please provide a login password with at least 4 characters');
+      return;
+    }
+
+    if (collector && password.trim() && password.trim().length < 4) {
+      alert('Password must have at least 4 characters');
+      return;
+    }
+
     store.saveCollector({
       id: collector?.id,
       name,
       phone,
+      password: password.trim() || undefined,
       canCollectAll,
       canVerifyPayments,
       isActive,
@@ -83,6 +96,41 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
               placeholder="e.g. 9822011111"
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden"
             />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-slate-700">
+                {collector ? 'Collector Login Password' : 'Collector Login Password *'}
+              </label>
+              {collector && (
+                <span className="text-[10px] text-slate-400 font-medium">
+                  (Leave blank to keep existing)
+                </span>
+              )}
+            </div>
+            <div className="relative">
+              <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required={!collector}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder={collector ? 'Enter new password to update' : 'Min 4 characters (e.g. coll123)'}
+                className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="p-1 text-slate-400 hover:text-slate-600 absolute right-3 top-1/2 -translate-y-1/2"
+                title={showPassword ? 'Hide Password' : 'Show Password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Collector will use their mobile number and this password to log in.
+            </p>
           </div>
 
           {/* Super Admin Special Permission: Can collect from all members */}

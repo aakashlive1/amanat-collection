@@ -348,19 +348,22 @@ class DataStore {
     return this.getUsers().filter(u => u.role === 'collector');
   }
 
-  saveCollector(collector: Partial<User> & { name: string; phone: string }): User {
+  saveCollector(collector: Partial<User> & { name: string; phone: string; password?: string }): User {
     const users = this.getUsers();
     let savedUser: User;
     if (collector.id) {
-      const updated = users.map(u => (u.id === collector.id ? { ...u, ...collector } as User : u));
+      const existing = users.find(u => u.id === collector.id);
+      const updatedPassword = collector.password?.trim() ? collector.password.trim() : (existing?.password || 'coll123');
+      const updated = users.map(u => (u.id === collector.id ? { ...u, ...collector, password: updatedPassword } as User : u));
       this.set(STORAGE_KEYS.USERS, updated);
       savedUser = updated.find(u => u.id === collector.id)!;
     } else {
       const newUser: User = {
         id: `u-coll-${Date.now()}`,
-        name: collector.name,
-        phone: collector.phone,
+        name: collector.name.trim(),
+        phone: collector.phone.trim(),
         role: 'collector',
+        password: collector.password?.trim() || 'coll123',
         canCollectAll: collector.canCollectAll ?? false,
         canVerifyPayments: collector.canVerifyPayments ?? false,
         isActive: collector.isActive ?? true,
