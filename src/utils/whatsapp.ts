@@ -48,3 +48,54 @@ export const buildWhatsAppReceiptUrl = ({
 
   return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
 };
+
+export interface WhatsAppWithdrawalParams {
+  memberPhone: string;
+  memberName: string;
+  memberCode: string;
+  amount: number;
+  paymentMode: 'cash' | 'online';
+  processedByName: string;
+  remainingBalance: number;
+  uniqueToken: string;
+  appName?: string;
+}
+
+/**
+ * Builds a free WhatsApp direct payout / withdrawal receipt message link
+ */
+export const buildWhatsAppWithdrawalReceiptUrl = ({
+  memberPhone,
+  memberName,
+  memberCode,
+  amount,
+  paymentMode,
+  processedByName,
+  remainingBalance,
+  uniqueToken,
+  appName = 'Amanat Collection',
+}: WhatsAppWithdrawalParams): string => {
+  let cleanPhone = memberPhone.replace(/[^0-9]/g, '');
+  if (cleanPhone.length === 10) {
+    cleanPhone = `91${cleanPhone}`;
+  }
+
+  const passbookUrl = `${window.location.origin}/#/m/${uniqueToken}`;
+  const modeText = paymentMode === 'cash' ? '💵 Cash Payout' : '📲 Bank / Online UPI Payout';
+  const now = formatDateTime(new Date().toISOString());
+
+  const message = `*${appName} - Withdrawal / Payout Receipt*\n\n` +
+    `Hello *${memberName}*,\n` +
+    `Your payout / withdrawal has been processed successfully.\n\n` +
+    `📌 *Member Code:* ${memberCode}\n` +
+    `💸 *Amount Paid Out:* ${formatCurrency(amount)}\n` +
+    `💳 *Payment Mode:* ${modeText}\n` +
+    `💼 *Remaining Net Balance:* ${formatCurrency(remainingBalance)}\n` +
+    `👤 *Processed By:* ${processedByName}\n` +
+    `🕒 *Date & Time:* ${now}\n\n` +
+    `To view your complete passbook statement and transaction history, visit:\n` +
+    `👉 ${passbookUrl}\n\n` +
+    `_Thank you, ${appName}_`;
+
+  return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+};

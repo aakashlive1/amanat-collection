@@ -166,9 +166,7 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
   };
 
   const transactions = store.getMemberTransactions(member.id);
-  const totalVerifiedDeposited = transactions
-    .filter(t => t.status === 'completed')
-    .reduce((acc, t) => acc + t.amount, 0);
+  const balanceInfo = store.getMemberBalance(member.id);
 
   const pendingVerificationAmount = transactions
     .filter(t => t.status === 'pending_verification')
@@ -198,7 +196,7 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
 
       <div className="max-w-md mx-auto px-4 -mt-8 space-y-4">
         {/* Passbook Summary Card */}
-        <div className="bg-white rounded-3xl p-5 shadow-lg border border-slate-100">
+        <div className="bg-white rounded-3xl p-5 shadow-lg border border-slate-100 space-y-4">
           <div className="flex items-start justify-between border-b border-slate-100 pb-3">
             <div>
               <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
@@ -217,23 +215,39 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
             </div>
           </div>
 
-          <div className="pt-4 grid grid-cols-2 gap-2 text-center">
-            <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-100">
-              <span className="text-[11px] font-bold text-emerald-800 block">Verified Deposited</span>
-              <span className="text-xl font-black text-emerald-950 mt-0.5 block">
-                {formatCurrency(totalVerifiedDeposited)}
+          {/* Primary Available Net Balance Card */}
+          <div className="p-4 bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl shadow-md shadow-emerald-200 flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-100 block">
+                Available Net Balance (शुद्ध शेष)
+              </span>
+              <span className="text-2xl font-black tracking-tight block mt-0.5">
+                {formatCurrency(balanceInfo.netBalance)}
               </span>
             </div>
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-              <span className="text-[11px] font-bold text-slate-500 block">Total Entries</span>
-              <span className="text-xl font-black text-slate-900 mt-0.5 block">
-                {transactions.length}
+            <div className="text-right text-[11px] text-emerald-100 font-semibold">
+              <span className="block">{transactions.length} Total Entries</span>
+            </div>
+          </div>
+
+          {/* Sub Totals: Total Deposited vs Total Withdrawn */}
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-100">
+              <span className="text-[11px] font-bold text-emerald-800 block">Total Deposited</span>
+              <span className="text-lg font-black text-emerald-950 mt-0.5 block">
+                {formatCurrency(balanceInfo.totalDeposited)}
+              </span>
+            </div>
+            <div className="p-3 bg-amber-50/70 rounded-2xl border border-amber-100">
+              <span className="text-[11px] font-bold text-amber-800 block">Total Withdrawn</span>
+              <span className="text-lg font-black text-amber-950 mt-0.5 block">
+                {formatCurrency(balanceInfo.totalWithdrawn)}
               </span>
             </div>
           </div>
 
           {pendingCount > 0 && (
-            <div className="mt-3 p-2.5 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
+            <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
               <span className="text-amber-900 font-bold flex items-center">
                 <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>
                 Under Bank Verification:
@@ -368,70 +382,91 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
                 No transactions recorded yet.
               </div>
             ) : (
-              transactions.map(tx => (
-                <div key={tx.id} className="p-4 flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center space-x-1.5">
-                      <span className="text-xs font-extrabold text-slate-900">
-                        {formatDate(tx.collectionDate)}
-                      </span>
+              transactions.map(tx => {
+                const isWithdrawal = tx.txType === 'withdrawal';
+
+                return (
+                  <div key={tx.id} className="p-4 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-xs font-extrabold text-slate-900">
+                          {formatDate(tx.collectionDate)}
+                        </span>
+                        {isWithdrawal ? (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
+                            Withdrawal / Payout ({tx.paymentMode === 'cash' ? 'Cash' : 'Online'})
+                          </span>
+                        ) : (
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              tx.paymentMode === 'cash'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}
+                          >
+                            Deposit ({tx.paymentMode === 'cash' ? 'Cash' : 'Online UPI'})
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {formatDateTime(tx.createdAt)}
+                        {tx.notes && ` • ${tx.notes}`}
+                        {tx.utrNumber && ` • Ref: ${tx.utrNumber}`}
+                      </p>
+                      {tx.rejectionReason && (
+                        <p className="text-[10px] text-rose-600 font-semibold mt-0.5">
+                          ❌ Reason: {tx.rejectionReason}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="text-right">
                       <span
-                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                          tx.paymentMode === 'cash'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-blue-100 text-blue-800'
+                        className={`text-sm font-black block ${
+                          tx.status === 'rejected'
+                            ? 'text-slate-400 line-through'
+                            : tx.status === 'pending_verification'
+                            ? 'text-amber-700'
+                            : isWithdrawal
+                            ? 'text-amber-700'
+                            : 'text-emerald-700'
                         }`}
                       >
-                        {tx.paymentMode === 'cash' ? 'Cash' : 'Online UPI'}
+                        {isWithdrawal ? '-' : '+'}{formatCurrency(tx.amount)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full inline-flex items-center justify-end ${
+                          tx.status === 'completed'
+                            ? isWithdrawal
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-emerald-100 text-emerald-800'
+                            : tx.status === 'pending_verification'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {tx.status === 'completed' ? (
+                          isWithdrawal ? (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 mr-0.5 text-amber-600" /> Paid Out
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-3 h-3 mr-0.5 text-emerald-600" /> Verified
+                            </>
+                          )
+                        ) : tx.status === 'pending_verification' ? (
+                          <>
+                            <Clock className="w-3 h-3 mr-0.5 text-amber-600" /> Unverified
+                          </>
+                        ) : (
+                          'Rejected'
+                        )}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {formatDateTime(tx.createdAt)}
-                      {tx.utrNumber && ` • Ref: ${tx.utrNumber}`}
-                    </p>
-                    {tx.rejectionReason && (
-                      <p className="text-[10px] text-rose-600 font-semibold mt-0.5">
-                        ❌ Reason: {tx.rejectionReason}
-                      </p>
-                    )}
                   </div>
-
-                  <div className="text-right">
-                    <span
-                      className={`text-sm font-black block ${
-                        tx.status === 'rejected'
-                          ? 'text-slate-400 line-through'
-                          : tx.status === 'pending_verification'
-                          ? 'text-amber-700'
-                          : 'text-emerald-700'
-                      }`}
-                    >
-                      +{formatCurrency(tx.amount)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full inline-flex items-center justify-end ${
-                        tx.status === 'completed'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : tx.status === 'pending_verification'
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-rose-100 text-rose-800'
-                      }`}
-                    >
-                      {tx.status === 'completed' ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3 mr-0.5 text-emerald-600" /> Verified
-                        </>
-                      ) : tx.status === 'pending_verification' ? (
-                        <>
-                          <Clock className="w-3 h-3 mr-0.5 text-amber-600" /> Unverified
-                        </>
-                      ) : (
-                        'Rejected'
-                      )}
-                    </span>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

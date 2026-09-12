@@ -18,6 +18,7 @@ export const INITIAL_USERS: User[] = [
     password: 'admin123',
     canCollectAll: true,
     canVerifyPayments: true,
+    canWithdraw: true,
     isActive: true,
     createdAt: '2026-09-01T10:00:00Z',
   },
@@ -29,6 +30,7 @@ export const INITIAL_USERS: User[] = [
     password: 'coll123',
     canCollectAll: true, // Super Admin granted all-members access
     canVerifyPayments: true, // Super Admin granted online verification rights
+    canWithdraw: true, // Super Admin granted withdrawal rights
     isActive: true,
     createdAt: '2026-09-01T11:00:00Z',
   },
@@ -40,6 +42,7 @@ export const INITIAL_USERS: User[] = [
     password: 'coll123',
     canCollectAll: false, // Only assigned members
     canVerifyPayments: false, // Cannot verify online payments
+    canWithdraw: false, // Cannot process member withdrawals
     isActive: true,
     createdAt: '2026-09-02T10:00:00Z',
   },

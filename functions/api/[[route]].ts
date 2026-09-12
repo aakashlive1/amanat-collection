@@ -51,6 +51,10 @@ export const onRequest = async (context: any) => {
       )
     `).run().catch(() => {});
 
+    // Ensure backwards-compatible columns exist on transactions and users
+    await env.DB.prepare("ALTER TABLE transactions ADD COLUMN tx_type TEXT DEFAULT 'deposit'").run().catch(() => {});
+    await env.DB.prepare("ALTER TABLE users ADD COLUMN can_withdraw INTEGER DEFAULT 0").run().catch(() => {});
+
     // 1. Health Check
     if (path === 'health') {
       return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
@@ -60,9 +64,9 @@ export const onRequest = async (context: any) => {
     if (path === 'init' && (request.method === 'GET' || request.method === 'POST')) {
       const initQueries = [
         `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, role TEXT NOT NULL CHECK (role IN ('admin', 'collector')), password_hash TEXT NOT NULL, can_collect_all INTEGER NOT NULL DEFAULT 0, can_verify_online INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, role TEXT NOT NULL CHECK (role IN ('admin', 'collector')), password_hash TEXT NOT NULL, can_collect_all INTEGER NOT NULL DEFAULT 0, can_verify_online INTEGER NOT NULL DEFAULT 0, can_withdraw INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT, daily_amount REAL NOT NULL DEFAULT 0, assigned_collector_id TEXT, unique_token TEXT UNIQUE NOT NULL, pin TEXT NOT NULL DEFAULT '1234', is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), tx_type TEXT NOT NULL DEFAULT 'deposit' CHECK (tx_type IN ('deposit', 'withdrawal')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS cash_settlements (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, settlement_date TEXT NOT NULL, cash_collected REAL NOT NULL, cash_submitted REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'discrepancy')), notes TEXT, approved_by TEXT, approved_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS deleted_records (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE INDEX IF NOT EXISTS idx_members_code ON members(code);`,
@@ -78,16 +82,17 @@ export const onRequest = async (context: any) => {
 
       // Upsert default admin & collectors
       await env.DB.prepare(`
-        INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online)
+        INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw)
         VALUES 
-          ('u-admin-1', 'Super Admin', '9876543210', 'admin', 'admin123', 1, 1),
-          ('u-coll-1', 'Rajesh Kumar', '9822011111', 'collector', 'coll123', 1, 1),
-          ('u-coll-2', 'Vikram Singh', '9822022222', 'collector', 'coll123', 0, 0)
+          ('u-admin-1', 'Super Admin', '9876543210', 'admin', 'admin123', 1, 1, 1),
+          ('u-coll-1', 'Rajesh Kumar', '9822011111', 'collector', 'coll123', 1, 1, 1),
+          ('u-coll-2', 'Vikram Singh', '9822022222', 'collector', 'coll123', 0, 0, 0)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           phone = excluded.phone,
           can_collect_all = excluded.can_collect_all,
-          can_verify_online = excluded.can_verify_online
+          can_verify_online = excluded.can_verify_online,
+          can_withdraw = excluded.can_withdraw
       `).run();
 
       // Upsert default sample members
@@ -129,7 +134,7 @@ export const onRequest = async (context: any) => {
     if (path === 'bootstrap' && request.method === 'GET') {
       const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
-        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
+        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
@@ -151,6 +156,7 @@ export const onRequest = async (context: any) => {
           password: u.password_hash,
           canCollectAll: Boolean(u.can_collect_all),
           canVerifyPayments: Boolean(u.can_verify_online),
+          canWithdraw: Boolean(u.can_withdraw),
           isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
           createdAt: u.created_at,
         }));
@@ -177,6 +183,7 @@ export const onRequest = async (context: any) => {
         collectorId: t.collector_id || null,
         amount: Number(t.amount) || 0,
         paymentMode: t.payment_mode,
+        txType: (t.tx_type as 'deposit' | 'withdrawal') || 'deposit',
         status: t.status,
         utrNumber: t.utr_number || undefined,
         notes: t.notes || undefined,
@@ -272,9 +279,10 @@ export const onRequest = async (context: any) => {
         for (const tx of localTransactions) {
           try {
             await env.DB.prepare(`
-              INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, status, utr_number, notes, collection_date, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, tx_type, status, utr_number, notes, collection_date, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
+                tx_type = excluded.tx_type,
                 status = excluded.status,
                 utr_number = excluded.utr_number,
                 notes = excluded.notes
@@ -284,6 +292,7 @@ export const onRequest = async (context: any) => {
               tx.collectorId || null,
               tx.amount,
               tx.paymentMode,
+              tx.txType || 'deposit',
               tx.status || 'completed',
               tx.utrNumber || null,
               tx.notes || null,
@@ -307,7 +316,7 @@ export const onRequest = async (context: any) => {
       // Fetch and return full latest cloud state
       const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
-        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active, created_at FROM users').all(),
+        env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
         env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
@@ -329,6 +338,7 @@ export const onRequest = async (context: any) => {
           password: u.password_hash,
           canCollectAll: Boolean(u.can_collect_all),
           canVerifyPayments: Boolean(u.can_verify_online),
+          canWithdraw: Boolean(u.can_withdraw),
           isActive: Boolean(u.is_active === 1 || u.is_active === true || u.is_active === undefined),
           createdAt: u.created_at,
         }));
@@ -355,6 +365,7 @@ export const onRequest = async (context: any) => {
         collectorId: t.collector_id || null,
         amount: Number(t.amount) || 0,
         paymentMode: t.payment_mode,
+        txType: (t.tx_type as 'deposit' | 'withdrawal') || 'deposit',
         status: t.status,
         utrNumber: t.utr_number || undefined,
         notes: t.notes || undefined,
@@ -389,7 +400,7 @@ export const onRequest = async (context: any) => {
     // 4. Save/Update Transaction
     if (path === 'transactions' && request.method === 'POST') {
       const body = await request.json();
-      const { id, memberId, collectorId, amount, paymentMode, status, utrNumber, notes, collectionDate, createdAt } = body;
+      const { id, memberId, collectorId, amount, paymentMode, txType, status, utrNumber, notes, collectionDate, createdAt } = body;
 
       // Auto-create member in D1 if not existing
       const memberExists = await env.DB.prepare('SELECT id FROM members WHERE id = ?').bind(memberId).first();
@@ -408,9 +419,10 @@ export const onRequest = async (context: any) => {
       }
 
       await env.DB.prepare(`
-        INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, status, utr_number, notes, collection_date, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO transactions (id, member_id, collector_id, amount, payment_mode, tx_type, status, utr_number, notes, collection_date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          tx_type = excluded.tx_type,
           status = excluded.status,
           utr_number = excluded.utr_number,
           notes = excluded.notes
@@ -420,6 +432,7 @@ export const onRequest = async (context: any) => {
         collectorId || null,
         amount,
         paymentMode,
+        txType || 'deposit',
         status || 'completed',
         utrNumber || null,
         notes || null,
@@ -527,18 +540,19 @@ export const onRequest = async (context: any) => {
     // 8. Save/Update User / Collector
     if (path === 'users' && request.method === 'POST') {
       const body = await request.json();
-      const { id, name, phone, role, password, canCollectAll, canVerifyOnline, isActive } = body;
+      const { id, name, phone, role, password, canCollectAll, canVerifyOnline, canWithdraw, isActive } = body;
       const cleanPassword = password ? String(password).trim() : '';
 
       await env.DB.prepare(`
-        INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online, is_active)
-        VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'coll123'), ?, ?, ?)
+        INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active)
+        VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'coll123'), ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           phone = excluded.phone,
           password_hash = CASE WHEN excluded.password_hash != '' AND excluded.password_hash IS NOT NULL THEN excluded.password_hash ELSE users.password_hash END,
           can_collect_all = excluded.can_collect_all,
           can_verify_online = excluded.can_verify_online,
+          can_withdraw = excluded.can_withdraw,
           is_active = excluded.is_active
       `).bind(
         id,
@@ -548,6 +562,7 @@ export const onRequest = async (context: any) => {
         cleanPassword,
         canCollectAll ? 1 : 0,
         canVerifyOnline ? 1 : 0,
+        canWithdraw ? 1 : 0,
         isActive === undefined ? 1 : (isActive ? 1 : 0)
       ).run();
 

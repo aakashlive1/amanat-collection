@@ -15,6 +15,7 @@ import {
   Banknote,
   Users,
   FileSpreadsheet,
+  ArrowDownCircle,
 } from 'lucide-react';
 import { CollectorStatementModal } from '../../components/CollectorStatementModal';
 
@@ -31,6 +32,10 @@ export const AdminCollectors: React.FC = () => {
 
   const handleToggleCanVerify = (collectorId: string) => {
     store.toggleCollectorCanVerifyPayments(collectorId);
+  };
+
+  const handleToggleCanWithdraw = (collectorId: string) => {
+    store.toggleCollectorCanWithdraw(collectorId);
   };
 
   const handleToggleStatus = (collectorId: string) => {
@@ -202,6 +207,42 @@ export const AdminCollectors: React.FC = () => {
                   }`}
                 >
                   {collector.canVerifyPayments ? 'Revoke' : 'Grant'}
+                </button>
+              </div>
+
+              {/* Permission Badge: Member Withdrawals / Payouts Rights */}
+              <div className="p-3 bg-slate-50 rounded-xl flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <ArrowDownCircle
+                    className={`w-4 h-4 ${
+                      collector.canWithdraw ? 'text-amber-600' : 'text-slate-400'
+                    }`}
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 block">
+                      Member Withdrawals / Payouts:{' '}
+                      <span className={collector.canWithdraw ? 'text-amber-700' : 'text-slate-500'}>
+                        {collector.canWithdraw ? 'Allowed' : 'Disabled'}
+                      </span>
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {collector.canWithdraw
+                        ? 'Can process cash & online payouts for members'
+                        : 'Withdrawals restricted to Super Admin only'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleToggleCanWithdraw(collector.id)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                    collector.canWithdraw
+                      ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                      : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                  }`}
+                >
+                  {collector.canWithdraw ? 'Revoke' : 'Grant'}
                 </button>
               </div>
 

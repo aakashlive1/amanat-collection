@@ -8,6 +8,7 @@ export interface User {
   password?: string;
   canCollectAll: boolean; // if true, can collect from any member; if false, only assigned members
   canVerifyPayments: boolean; // if true, Super Admin has allowed this collector to verify/approve online UPI payments
+  canWithdraw?: boolean; // if true, Super Admin has allowed this collector to process member payouts/withdrawals
   isActive: boolean;
   createdAt: string;
 }
@@ -28,6 +29,7 @@ export interface Member {
 
 export type PaymentMode = 'cash' | 'online';
 export type PaymentStatus = 'completed' | 'pending_verification' | 'rejected';
+export type TransactionType = 'deposit' | 'withdrawal';
 
 export interface Transaction {
   id: string;
@@ -35,6 +37,7 @@ export interface Transaction {
   collectorId?: string | null; // null if paid directly by member
   amount: number;
   paymentMode: PaymentMode;
+  txType?: TransactionType; // 'deposit' (collection) or 'withdrawal' (payout/deduction)
   status: PaymentStatus;
   utrNumber?: string;
   notes?: string;

@@ -139,6 +139,7 @@ class DataStore {
             password: u.password || u.password_hash || (u.role === 'admin' ? 'admin123' : 'coll123'),
             canCollectAll: u.canCollectAll !== undefined ? Boolean(u.canCollectAll) : Boolean(u.can_collect_all),
             canVerifyPayments: u.canVerifyPayments !== undefined ? Boolean(u.canVerifyPayments) : Boolean(u.can_verify_online),
+            canWithdraw: u.canWithdraw !== undefined ? Boolean(u.canWithdraw) : Boolean(u.can_withdraw),
             isActive: u.isActive !== undefined ? Boolean(u.isActive) : Boolean(u.is_active ?? 1),
             createdAt: u.createdAt || u.created_at || new Date().toISOString(),
           }));
@@ -192,6 +193,7 @@ class DataStore {
             collectorId: t.collectorId || t.collector_id || null,
             amount: Number(t.amount) || 0,
             paymentMode: t.paymentMode || t.payment_mode,
+            txType: (t.txType || t.tx_type || 'deposit') as 'deposit' | 'withdrawal',
             status: t.status,
             utrNumber: t.utrNumber || t.utr_number || undefined,
             notes: t.notes || undefined,
@@ -265,6 +267,7 @@ class DataStore {
         password: user.password,
         canCollectAll: user.canCollectAll !== undefined ? Boolean(user.canCollectAll) : Boolean((user as any).can_collect_all),
         canVerifyPayments: user.canVerifyPayments !== undefined ? Boolean(user.canVerifyPayments) : Boolean((user as any).can_verify_online),
+        canWithdraw: user.canWithdraw !== undefined ? Boolean(user.canWithdraw) : Boolean((user as any).can_withdraw),
         isActive: true,
         createdAt: user.createdAt || (user as any).created_at || new Date().toISOString(),
       };
@@ -366,6 +369,7 @@ class DataStore {
         password: collector.password?.trim() || 'coll123',
         canCollectAll: collector.canCollectAll ?? false,
         canVerifyPayments: collector.canVerifyPayments ?? false,
+        canWithdraw: collector.canWithdraw ?? false,
         isActive: collector.isActive ?? true,
         createdAt: new Date().toISOString(),
       };
@@ -382,6 +386,7 @@ class DataStore {
       password: savedUser.password || 'coll123',
       canCollectAll: savedUser.canCollectAll,
       canVerifyOnline: savedUser.canVerifyPayments,
+      canWithdraw: savedUser.canWithdraw,
       isActive: savedUser.isActive,
     });
 
@@ -421,18 +426,80 @@ class DataStore {
     const users = this.getUsers();
     const updated = users.map(u => (u.id === id ? { ...u, isActive: !u.isActive } : u));
     this.set(STORAGE_KEYS.USERS, updated);
+    const target = updated.find(u => u.id === id);
+    if (target) {
+      this.postApi('users', {
+        id: target.id,
+        name: target.name,
+        phone: target.phone,
+        role: target.role,
+        password: target.password || 'coll123',
+        canCollectAll: target.canCollectAll,
+        canVerifyOnline: target.canVerifyPayments,
+        canWithdraw: target.canWithdraw,
+        isActive: target.isActive,
+      });
+    }
   }
 
   toggleCollectorCanCollectAll(id: string): void {
     const users = this.getUsers();
     const updated = users.map(u => (u.id === id ? { ...u, canCollectAll: !u.canCollectAll } : u));
     this.set(STORAGE_KEYS.USERS, updated);
+    const target = updated.find(u => u.id === id);
+    if (target) {
+      this.postApi('users', {
+        id: target.id,
+        name: target.name,
+        phone: target.phone,
+        role: target.role,
+        password: target.password || 'coll123',
+        canCollectAll: target.canCollectAll,
+        canVerifyOnline: target.canVerifyPayments,
+        canWithdraw: target.canWithdraw,
+        isActive: target.isActive,
+      });
+    }
   }
 
   toggleCollectorCanVerifyPayments(id: string): void {
     const users = this.getUsers();
     const updated = users.map(u => (u.id === id ? { ...u, canVerifyPayments: !u.canVerifyPayments } : u));
     this.set(STORAGE_KEYS.USERS, updated);
+    const target = updated.find(u => u.id === id);
+    if (target) {
+      this.postApi('users', {
+        id: target.id,
+        name: target.name,
+        phone: target.phone,
+        role: target.role,
+        password: target.password || 'coll123',
+        canCollectAll: target.canCollectAll,
+        canVerifyOnline: target.canVerifyPayments,
+        canWithdraw: target.canWithdraw,
+        isActive: target.isActive,
+      });
+    }
+  }
+
+  toggleCollectorCanWithdraw(id: string): void {
+    const users = this.getUsers();
+    const updated = users.map(u => (u.id === id ? { ...u, canWithdraw: !u.canWithdraw } : u));
+    this.set(STORAGE_KEYS.USERS, updated);
+    const target = updated.find(u => u.id === id);
+    if (target) {
+      this.postApi('users', {
+        id: target.id,
+        name: target.name,
+        phone: target.phone,
+        role: target.role,
+        password: target.password || 'coll123',
+        canCollectAll: target.canCollectAll,
+        canVerifyOnline: target.canVerifyPayments,
+        canWithdraw: target.canWithdraw,
+        isActive: target.isActive,
+      });
+    }
   }
 
   // Members
@@ -537,22 +604,57 @@ class DataStore {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }
 
+  getMemberBalance(memberId: string) {
+    const memberTxs = this.getTransactions().filter(t => t.memberId === memberId);
+    
+    let totalDeposited = 0;
+    let totalWithdrawn = 0;
+    let pendingDeposit = 0;
+
+    memberTxs.forEach(t => {
+      const type = t.txType || 'deposit';
+      if (type === 'deposit') {
+        if (t.status === 'completed') {
+          totalDeposited += Number(t.amount) || 0;
+        } else if (t.status === 'pending_verification') {
+          pendingDeposit += Number(t.amount) || 0;
+        }
+      } else if (type === 'withdrawal') {
+        if (t.status === 'completed') {
+          totalWithdrawn += Number(t.amount) || 0;
+        }
+      }
+    });
+
+    const netBalance = Math.max(0, totalDeposited - totalWithdrawn);
+
+    return {
+      totalDeposited,
+      totalWithdrawn,
+      netBalance,
+      pendingDeposit,
+    };
+  }
+
   addTransaction(data: {
     memberId: string;
     collectorId?: string | null;
     amount: number;
     paymentMode: PaymentMode;
+    txType?: 'deposit' | 'withdrawal';
     utrNumber?: string;
     notes?: string;
     status?: 'completed' | 'pending_verification';
   }): Transaction {
     const transactions = this.getTransactions();
+    const txType = data.txType || 'deposit';
     const newTx: Transaction = {
       id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       memberId: data.memberId,
       collectorId: data.collectorId || null,
       amount: Number(data.amount),
       paymentMode: data.paymentMode,
+      txType,
       status: data.status || 'completed',
       utrNumber: data.utrNumber?.trim(),
       notes: data.notes?.trim(),
@@ -659,16 +761,27 @@ class DataStore {
       return (t.collectorId === collectorId || cleanCollId === cleanId) && t.collectionDate === today && t.status === 'completed';
     });
 
-    const cashCollected = transactions
+    const deposits = transactions.filter(t => t.txType === 'deposit' || !t.txType);
+    const withdrawals = transactions.filter(t => t.txType === 'withdrawal');
+
+    const cashDeposits = deposits
       .filter(t => t.paymentMode === 'cash')
       .reduce((acc, t) => acc + t.amount, 0);
 
-    const onlineCollected = transactions
+    const cashWithdrawals = withdrawals
+      .filter(t => t.paymentMode === 'cash')
+      .reduce((acc, t) => acc + t.amount, 0);
+
+    // Physical cash collector holds = cash collected minus cash paid out to members
+    const cashCollected = cashDeposits - cashWithdrawals;
+
+    const onlineCollected = deposits
       .filter(t => t.paymentMode === 'online')
       .reduce((acc, t) => acc + t.amount, 0);
 
-    const totalCollected = cashCollected + onlineCollected;
-    const collectedMemberIds = new Set(transactions.map(t => t.memberId));
+    const totalCollected = cashDeposits + onlineCollected;
+    const totalPayouts = withdrawals.reduce((acc, t) => acc + t.amount, 0);
+    const collectedMemberIds = new Set(deposits.map(t => t.memberId));
 
     // Get today's settlement status if submitted
     const settlement = this.getSettlements().find(s => {
@@ -689,8 +802,11 @@ class DataStore {
     return {
       today,
       totalCollected,
+      cashDeposits,
+      cashWithdrawals,
       cashCollected,
       onlineCollected,
+      totalPayouts,
       collectedCount: collectedMemberIds.size,
       transactions,
       settlement,
@@ -705,15 +821,23 @@ class DataStore {
       t => t.collectionDate === today && t.status === 'completed'
     );
 
-    const totalAmount = todayTransactions.reduce((acc, t) => acc + t.amount, 0);
-    const cashAmount = todayTransactions
+    const deposits = todayTransactions.filter(t => t.txType === 'deposit' || !t.txType);
+    const withdrawals = todayTransactions.filter(t => t.txType === 'withdrawal');
+
+    const totalAmount = deposits.reduce((acc, t) => acc + t.amount, 0);
+    const cashAmount = deposits
       .filter(t => t.paymentMode === 'cash')
       .reduce((acc, t) => acc + t.amount, 0);
-    const onlineAmount = todayTransactions
+    const onlineAmount = deposits
       .filter(t => t.paymentMode === 'online')
       .reduce((acc, t) => acc + t.amount, 0);
 
-    const paidMemberIds = new Set(todayTransactions.map(t => t.memberId));
+    const totalWithdrawalAmount = withdrawals.reduce((acc, t) => acc + t.amount, 0);
+    const cashWithdrawalAmount = withdrawals
+      .filter(t => t.paymentMode === 'cash')
+      .reduce((acc, t) => acc + t.amount, 0);
+
+    const paidMemberIds = new Set(deposits.map(t => t.memberId));
     const pendingMembers = allMembers.filter(m => !paidMemberIds.has(m.id));
 
     // Pending settlements to approve
@@ -729,6 +853,9 @@ class DataStore {
       totalAmount,
       cashAmount,
       onlineAmount,
+      totalWithdrawalAmount,
+      cashWithdrawalAmount,
+      netCashInHand: cashAmount - cashWithdrawalAmount,
       totalMembers: allMembers.length,
       paidMembersCount: paidMemberIds.size,
       pendingMembersCount: pendingMembers.length,

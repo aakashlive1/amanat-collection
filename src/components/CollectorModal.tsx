@@ -21,6 +21,7 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [canCollectAll, setCanCollectAll] = useState(collector?.canCollectAll ?? false);
   const [canVerifyPayments, setCanVerifyPayments] = useState(collector?.canVerifyPayments ?? false);
+  const [canWithdraw, setCanWithdraw] = useState(collector?.canWithdraw ?? false);
   const [isActive, setIsActive] = useState(collector?.isActive ?? true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -48,6 +49,7 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
       password: password.trim() || undefined,
       canCollectAll,
       canVerifyPayments,
+      canWithdraw,
       isActive,
     });
 
@@ -176,6 +178,29 @@ export const CollectorModal: React.FC<CollectorModalProps> = ({
                   {canVerifyPayments
                     ? '✅ This collector can verify and approve members’ self-paid online UTR submissions.'
                     : '🔒 Only Super Admin will verify online UPI payments.'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Super Admin Special Permission: Can process member withdrawals / payouts */}
+          <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/60 space-y-2">
+            <div className="flex items-start space-x-2.5">
+              <input
+                type="checkbox"
+                id="canWithdraw"
+                checked={canWithdraw}
+                onChange={e => setCanWithdraw(e.target.checked)}
+                className="w-4 h-4 mt-0.5 text-amber-600 rounded-sm border-amber-300 focus:ring-amber-500"
+              />
+              <div>
+                <label htmlFor="canWithdraw" className="text-xs font-extrabold text-amber-950 block">
+                  Allow Member Withdrawals / Payouts
+                </label>
+                <p className="text-[11px] text-amber-800 font-medium mt-0.5 leading-snug">
+                  {canWithdraw
+                    ? '✅ This collector can process cash & online payouts/deductions for members.'
+                    : '🔒 Member withdrawals are restricted to Super Admin only.'}
                 </p>
               </div>
             </div>

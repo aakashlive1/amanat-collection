@@ -3,6 +3,9 @@ import { store } from '../../services/store';
 import { Member } from '../../types';
 import { MemberModal } from '../../components/MemberModal';
 import { DeleteConfirmModal } from '../../components/DeleteConfirmModal';
+import { MemberStatementModal } from '../../components/MemberStatementModal';
+import { WithdrawModal } from '../../components/WithdrawModal';
+import { CollectModal } from '../../components/CollectModal';
 import { formatCurrency } from '../../utils/formatters';
 import {
   UserPlus,
@@ -16,17 +19,31 @@ import {
   CheckCircle2,
   XCircle,
   FileSpreadsheet,
+  ArrowDownCircle,
+  PlusCircle,
+  Wallet,
 } from 'lucide-react';
-import { MemberStatementModal } from '../../components/MemberStatementModal';
 
 export const AdminMembers: React.FC = () => {
   const members = store.getMembers();
   const collectors = store.getCollectors();
+  const authUser = store.getAuthUser() || store.getUsers().find(u => u.role === 'admin') || {
+    id: 'u-admin-1',
+    name: 'Super Admin',
+    phone: '9876543210',
+    role: 'admin' as const,
+    canCollectAll: true,
+    canVerifyPayments: true,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  };
 
   const [search, setSearch] = useState('');
   const [collectorFilter, setCollectorFilter] = useState('');
   const [editingMember, setEditingMember] = useState<Member | null | 'new'>(null);
   const [selectedStatementMember, setSelectedStatementMember] = useState<Member | null>(null);
+  const [withdrawingMember, setWithdrawingMember] = useState<Member | null>(null);
+  const [collectingMember, setCollectingMember] = useState<Member | null>(null);
   const [deletingMember, setDeletingMember] = useState<Member | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -117,6 +134,7 @@ export const AdminMembers: React.FC = () => {
           ) : (
             filteredMembers.map(member => {
               const assignedColl = collectors.find(c => c.id === member.assignedCollectorId);
+              const balance = store.getMemberBalance(member.id);
 
               return (
                 <div
@@ -163,11 +181,43 @@ export const AdminMembers: React.FC = () => {
                           (PIN: <code className="font-mono font-bold text-slate-700">{member.pin}</code>)
                         </span>
                       </p>
+
+                      {/* Net Balance & Totals Badge */}
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <div className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-bold text-emerald-800">
+                          <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Net Balance:</span>
+                          <span className="font-black text-emerald-700">{formatCurrency(balance.netBalance)}</span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-medium">
+                          (Collected: <strong className="text-emerald-700">{formatCurrency(balance.totalDeposited)}</strong> | Withdrawn: <strong className="text-amber-700">{formatCurrency(balance.totalWithdrawn)}</strong>)
+                        </span>
+                      </div>
                     </div>
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
+                  <div className="flex flex-wrap items-center gap-1.5 shrink-0 self-end sm:self-center">
+                    {/* Collect Payment Button */}
+                    <button
+                      onClick={() => setCollectingMember(member)}
+                      className="py-1.5 px-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl transition text-xs flex items-center space-x-1 font-bold active:scale-95"
+                      title="Record Payment Collection"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Collect</span>
+                    </button>
+
+                    {/* Member Payout / Withdrawal Button */}
+                    <button
+                      onClick={() => setWithdrawingMember(member)}
+                      className="py-1.5 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl transition text-xs flex items-center space-x-1 font-bold active:scale-95"
+                      title="Process Member Payout / Withdrawal"
+                    >
+                      <ArrowDownCircle className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Payout</span>
+                    </button>
+
                     {/* Copy Passbook Link */}
                     <button
                       onClick={() => handleCopyPassbook(member)}
@@ -244,6 +294,26 @@ export const AdminMembers: React.FC = () => {
           collectors={collectors}
           onClose={() => setEditingMember(null)}
           onSuccess={() => setEditingMember(null)}
+        />
+      )}
+
+      {/* Collect Modal */}
+      {collectingMember && (
+        <CollectModal
+          member={collectingMember}
+          collector={authUser}
+          onClose={() => setCollectingMember(null)}
+          onSuccess={() => setCollectingMember(null)}
+        />
+      )}
+
+      {/* Member Payout / Withdraw Modal */}
+      {withdrawingMember && (
+        <WithdrawModal
+          member={withdrawingMember}
+          processedBy={authUser}
+          onClose={() => setWithdrawingMember(null)}
+          onSuccess={() => setWithdrawingMember(null)}
         />
       )}
 

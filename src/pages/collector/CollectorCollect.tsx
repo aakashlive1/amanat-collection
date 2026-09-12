@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { User, Member } from '../../types';
 import { store } from '../../services/store';
 import { CollectModal } from '../../components/CollectModal';
+import { WithdrawModal } from '../../components/WithdrawModal';
 import { formatCurrency } from '../../utils/formatters';
 import {
   Search,
@@ -11,6 +12,7 @@ import {
   ChevronRight,
   Phone,
   Wallet,
+  ArrowDownCircle,
 } from 'lucide-react';
 
 interface CollectorCollectProps {
@@ -21,6 +23,7 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<'pending' | 'collected'>('pending');
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [withdrawingMember, setWithdrawingMember] = useState<Member | null>(null);
 
   const allMembers = store.getMembers().filter(m => m.isActive);
   const stats = store.getCollectorTodayStats(collector.id);
@@ -161,16 +164,17 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
         ) : (
           filteredMembers.map(member => {
             const isPaid = paidMemberIds.has(member.id);
+            const balance = store.getMemberBalance(member.id);
 
             return (
               <div
                 key={member.id}
                 onClick={() => setSelectedMember(member)}
-                className={`bg-white rounded-2xl border p-4 shadow-xs flex items-center justify-between cursor-pointer hover:border-emerald-500 active:scale-[0.99] transition ${
+                className={`bg-white rounded-2xl border p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:border-emerald-500 active:scale-[0.99] transition ${
                   isPaid ? 'border-emerald-200 bg-emerald-50/20' : 'border-slate-200'
                 }`}
               >
-                <div className="flex items-center space-x-3">
+                <div className="flex items-start space-x-3">
                   <div
                     className={`w-11 h-11 rounded-xl font-bold flex items-center justify-center text-sm shrink-0 ${
                       isPaid
@@ -195,9 +199,12 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
                       📞 {member.phone} {member.address && `• ${member.address}`}
                     </p>
 
-                    <div className="flex items-center space-x-2 mt-1">
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
                       <span className="text-xs font-black text-emerald-700">
                         Daily: {formatCurrency(member.dailyAmount)}
+                      </span>
+                      <span className="text-xs font-bold text-slate-600">
+                        • Net: <strong className="text-emerald-700">{formatCurrency(balance.netBalance)}</strong>
                       </span>
                       {isPaid && (
                         <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md flex items-center">
@@ -208,7 +215,7 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2 shrink-0">
+                <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
                   <a
                     href={`tel:${member.phone}`}
                     onClick={e => e.stopPropagation()}
@@ -218,8 +225,23 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
                     <Phone className="w-4 h-4" />
                   </a>
 
+                  {collector.canWithdraw && (
+                    <button
+                      type="button"
+                      onClick={e => {
+                        e.stopPropagation();
+                        setWithdrawingMember(member);
+                      }}
+                      className="py-2 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold flex items-center space-x-1 text-xs transition active:scale-95"
+                      title="Process Member Payout / Withdrawal"
+                    >
+                      <ArrowDownCircle className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Payout</span>
+                    </button>
+                  )}
+
                   <div
-                    className={`p-2 rounded-xl text-white font-bold flex items-center space-x-1 text-xs shadow-xs ${
+                    className={`p-2 px-3 rounded-xl text-white font-bold flex items-center space-x-1 text-xs shadow-xs ${
                       isPaid ? 'bg-slate-600' : 'bg-emerald-600 shadow-emerald-200'
                     }`}
                   >
@@ -241,6 +263,16 @@ export const CollectorCollect: React.FC<CollectorCollectProps> = ({ collector })
           collector={collector}
           onClose={() => setSelectedMember(null)}
           onSuccess={() => setSelectedMember(null)}
+        />
+      )}
+
+      {/* Withdraw / Payout Modal */}
+      {withdrawingMember && (
+        <WithdrawModal
+          member={withdrawingMember}
+          processedBy={collector}
+          onClose={() => setWithdrawingMember(null)}
+          onSuccess={() => setWithdrawingMember(null)}
         />
       )}
     </div>

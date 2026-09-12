@@ -27,6 +27,7 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [modeFilter, setModeFilter] = useState<'all' | 'cash' | 'online'>('all');
+  const [txTypeFilter, setTxTypeFilter] = useState<'all' | 'deposit' | 'withdrawal'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending_verification' | 'rejected'>('all');
 
   const settings = store.getSettings();
@@ -36,8 +37,32 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
   // All transactions for this member
   const allTransactions = store.getMemberTransactions(member.id);
 
+  // Pre-calculate running balance chronologically (oldest to newest)
+  const runningBalanceMap = new Map<string, number>();
+  let cumBal = 0;
+  const chronTxs = [...allTransactions].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+  for (const t of chronTxs) {
+    if (t.status === 'completed') {
+      if (t.txType === 'withdrawal') {
+        cumBal = Math.max(0, cumBal - t.amount);
+      } else {
+        cumBal += t.amount;
+      }
+    }
+    runningBalanceMap.set(t.id, cumBal);
+  }
+
+  // Overall member lifetime balance
+  const memberOverallBalance = store.getMemberBalance(member.id);
+
   // Filter logic
   const filteredTransactions = allTransactions.filter(tx => {
+    // Tx Type
+    const type = tx.txType || 'deposit';
+    if (txTypeFilter !== 'all' && type !== txTypeFilter) return false;
+
     // Mode
     if (modeFilter !== 'all' && tx.paymentMode !== modeFilter) return false;
     // Status
@@ -63,18 +88,16 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
     return true;
   });
 
-  // Calculate Metrics
-  const totalAmount = filteredTransactions
-    .filter(t => t.status === 'completed')
+  // Calculate Filtered Metrics
+  const totalDeposited = filteredTransactions
+    .filter(t => (t.txType === 'deposit' || !t.txType) && t.status === 'completed')
     .reduce((acc, t) => acc + t.amount, 0);
 
-  const cashAmount = filteredTransactions
-    .filter(t => t.paymentMode === 'cash' && t.status === 'completed')
+  const totalWithdrawn = filteredTransactions
+    .filter(t => t.txType === 'withdrawal' && t.status === 'completed')
     .reduce((acc, t) => acc + t.amount, 0);
 
-  const onlineAmount = filteredTransactions
-    .filter(t => t.paymentMode === 'online' && t.status === 'completed')
-    .reduce((acc, t) => acc + t.amount, 0);
+  const filteredNet = totalDeposited - totalWithdrawn;
 
   const pendingAmount = filteredTransactions
     .filter(t => t.status === 'pending_verification')
@@ -85,7 +108,9 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
     const headers = [
       'Transaction ID',
       'Date',
+      'Transaction Type',
       'Amount (INR)',
+      'Running Balance (INR)',
       'Payment Mode',
       'Status',
       'Collector Name',
@@ -96,10 +121,15 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
 
     const rows = filteredTransactions.map(tx => {
       const collector = tx.collectorId ? allCollectors.find(c => c.id === tx.collectorId) : null;
+      const isWithdrawal = tx.txType === 'withdrawal';
+      const balAtTime = runningBalanceMap.get(tx.id) ?? 0;
+
       return [
         tx.id,
         tx.collectionDate,
-        tx.amount,
+        isWithdrawal ? 'Withdrawal / Payout' : 'Deposit / Collection',
+        isWithdrawal ? -tx.amount : tx.amount,
+        balAtTime,
         tx.paymentMode === 'cash' ? 'Cash' : 'Online UPI',
         tx.status,
         collector?.name || (tx.paymentMode === 'online' ? 'Self (Online)' : 'Direct'),
@@ -120,9 +150,9 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
         'Phone Number': member.phone,
         'Daily Installment': `Rs. ${member.dailyAmount}`,
         'Assigned Collector': assignedCollector?.name || 'Unassigned',
-        'Total Verified Paid': `Rs. ${totalAmount}`,
-        'Cash Paid': `Rs. ${cashAmount}`,
-        'Online UPI Paid': `Rs. ${onlineAmount}`,
+        'Total Deposited (Period)': `Rs. ${totalDeposited}`,
+        'Total Withdrawn (Period)': `Rs. ${totalWithdrawn}`,
+        'Net Available Balance (Lifetime)': `Rs. ${memberOverallBalance.netBalance}`,
         'Pending Verification': `Rs. ${pendingAmount}`,
         'Total Transactions': filteredTransactions.length,
       },
@@ -175,27 +205,29 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {/* Quick Metrics Summary Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+            <div className="p-3 bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl shadow-sm">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-100 block">
+                Net Balance
+              </span>
+              <span className="text-xl font-black mt-0.5 block">
+                {formatCurrency(memberOverallBalance.netBalance)}
+              </span>
+            </div>
             <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-100">
-              <span className="text-[11px] font-bold text-emerald-800 block">Total Verified</span>
+              <span className="text-[11px] font-bold text-emerald-800 block">Total Deposited</span>
               <span className="text-lg font-black text-emerald-950 mt-0.5 block">
-                {formatCurrency(totalAmount)}
-              </span>
-            </div>
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
-              <span className="text-[11px] font-bold text-slate-600 block">Cash Paid</span>
-              <span className="text-lg font-black text-slate-900 mt-0.5 block">
-                {formatCurrency(cashAmount)}
-              </span>
-            </div>
-            <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100">
-              <span className="text-[11px] font-bold text-blue-800 block">Online UPI</span>
-              <span className="text-lg font-black text-blue-950 mt-0.5 block">
-                {formatCurrency(onlineAmount)}
+                {formatCurrency(totalDeposited)}
               </span>
             </div>
             <div className="p-3 bg-amber-50 rounded-2xl border border-amber-100">
-              <span className="text-[11px] font-bold text-amber-800 block">Daily Target</span>
+              <span className="text-[11px] font-bold text-amber-800 block">Total Withdrawn</span>
               <span className="text-lg font-black text-amber-950 mt-0.5 block">
+                {formatCurrency(totalWithdrawn)}
+              </span>
+            </div>
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
+              <span className="text-[11px] font-bold text-slate-600 block">Daily Target</span>
+              <span className="text-lg font-black text-slate-900 mt-0.5 block">
                 {formatCurrency(member.dailyAmount)}
               </span>
             </div>
@@ -250,8 +282,20 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
               </div>
             )}
 
-            {/* Mode & Status filter dropdowns */}
-            <div className="grid grid-cols-2 gap-2 pt-1">
+            {/* Type, Mode & Status filter dropdowns */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <div>
+                <select
+                  value={txTypeFilter}
+                  onChange={e => setTxTypeFilter(e.target.value as any)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-hidden"
+                >
+                  <option value="all">All Types (Deposits & Payouts)</option>
+                  <option value="deposit">Deposits Only (+)</option>
+                  <option value="withdrawal">Withdrawals Only (-)</option>
+                </select>
+              </div>
+
               <div>
                 <select
                   value={modeFilter}
@@ -294,68 +338,89 @@ export const MemberStatementModal: React.FC<MemberStatementModalProps> = ({ memb
               ) : (
                 filteredTransactions.map(tx => {
                   const collector = tx.collectorId ? allCollectors.find(c => c.id === tx.collectorId) : null;
+                  const isWithdrawal = tx.txType === 'withdrawal';
+                  const runningBal = runningBalanceMap.get(tx.id) ?? 0;
 
                   return (
                     <div
                       key={tx.id}
-                      className="p-3.5 flex items-center justify-between hover:bg-slate-50/80 transition text-xs"
+                      className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-50/80 transition text-xs"
                     >
                       <div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <span className="font-extrabold text-slate-900">
                             {formatDate(tx.collectionDate)}
                           </span>
-                          <span
-                            className={`font-bold px-1.5 py-0.2 rounded text-[10px] uppercase ${
-                              tx.paymentMode === 'cash'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}
-                          >
-                            {tx.paymentMode === 'cash' ? 'Cash' : 'Online'}
+                          {isWithdrawal ? (
+                            <span className="font-bold px-1.5 py-0.5 rounded text-[10px] uppercase bg-amber-100 text-amber-800">
+                              Withdrawal / Payout
+                            </span>
+                          ) : (
+                            <span className="font-bold px-1.5 py-0.5 rounded text-[10px] uppercase bg-emerald-100 text-emerald-800">
+                              Deposit
+                            </span>
+                          )}
+                          <span className="font-semibold px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-700">
+                            {tx.paymentMode === 'cash' ? 'Cash' : 'Online UPI'}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          Collector: {collector?.name || (tx.paymentMode === 'online' ? 'Self Online' : 'Direct')} • {formatDateTime(tx.createdAt)}
+                          {isWithdrawal ? 'Processed By' : 'Collector'}: {collector?.name || (tx.paymentMode === 'online' ? 'Self Online' : 'Direct')} • {formatDateTime(tx.createdAt)}
                           {tx.utrNumber && ` • UTR: ${tx.utrNumber}`}
                         </p>
                         {tx.notes && (
-                          <p className="text-[10px] text-slate-400 italic">"{tx.notes}"</p>
+                          <p className="text-[10px] text-slate-500 italic mt-0.5">"{tx.notes}"</p>
                         )}
                       </div>
 
-                      <div className="text-right">
+                      <div className="text-left sm:text-right flex sm:flex-col justify-between items-end gap-1">
+                        <div>
+                          <span
+                            className={`font-black text-sm block ${
+                              tx.status === 'rejected'
+                                ? 'text-slate-400 line-through'
+                                : tx.status === 'pending_verification'
+                                ? 'text-amber-700'
+                                : isWithdrawal
+                                ? 'text-amber-700'
+                                : 'text-emerald-700'
+                            }`}
+                          >
+                            {isWithdrawal ? '-' : '+'}{formatCurrency(tx.amount)}
+                          </span>
+                          <span className="text-[11px] font-bold text-slate-500 block">
+                            Bal: <strong className="text-slate-800">{formatCurrency(runningBal)}</strong>
+                          </span>
+                        </div>
+
                         <span
-                          className={`font-black text-sm block ${
-                            tx.status === 'rejected'
-                              ? 'text-slate-400 line-through'
-                              : tx.status === 'pending_verification'
-                              ? 'text-amber-700'
-                              : 'text-emerald-700'
-                          }`}
-                        >
-                          +{formatCurrency(tx.amount)}
-                        </span>
-                        <span
-                          className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded-full inline-flex items-center ${
+                          className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full inline-flex items-center ${
                             tx.status === 'completed'
-                              ? 'bg-emerald-100 text-emerald-800'
+                              ? isWithdrawal
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-emerald-100 text-emerald-800'
                               : tx.status === 'pending_verification'
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-rose-100 text-rose-800'
                           }`}
                         >
                           {tx.status === 'completed' ? (
-                            <>
-                              <CheckCircle2 className="w-3 h-3 mr-0.5 text-emerald-600" /> Verified
-                            </>
+                            isWithdrawal ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 mr-0.5 text-amber-600" /> Paid Out
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 mr-0.5 text-emerald-600" /> Verified
+                              </>
+                            )
                           ) : tx.status === 'pending_verification' ? (
                             <>
                               <Clock className="w-3 h-3 mr-0.5 text-amber-600" /> Unverified
                             </>
                           ) : (
                             <>
-                              <XCircle className="w-3 h-3 mr-0.5" /> Rejected
+                              <XCircle className="w-3 h-3 mr-0.5 text-rose-600" /> Rejected
                             </>
                           )}
                         </span>
