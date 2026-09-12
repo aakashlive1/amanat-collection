@@ -8,7 +8,7 @@ interface Env {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Auth-Token',
 };
 
 function jsonResponse(data: unknown, status = 200) {
@@ -19,6 +19,39 @@ function jsonResponse(data: unknown, status = 200) {
       ...CORS_HEADERS,
     },
   });
+}
+
+// Authentication verification helper
+async function getAuthenticatedUser(request: any, env: any) {
+  try {
+    const authHeader = request.headers.get('Authorization') || request.headers.get('authorization') || request.headers.get('X-Auth-Token');
+    if (!authHeader) return null;
+
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) return null;
+
+    let payload: any = null;
+    try {
+      const decoded = atob(token);
+      payload = JSON.parse(decoded);
+    } catch {
+      return null;
+    }
+
+    if (!payload || !payload.id || !payload.role) return null;
+
+    // Verify against DB to ensure user is active and role hasn't been forged
+    const user = await env.DB.prepare(
+      'SELECT id, name, phone, role, is_active, can_collect_all, can_verify_online, can_withdraw FROM users WHERE id = ? AND is_active = 1'
+    ).bind(payload.id).first();
+
+    if (!user) return null;
+    if (user.role !== payload.role) return null; // Reject spoofed role
+
+    return user;
+  } catch {
+    return null;
+  }
 }
 
 export const onRequest = async (context: any) => {
@@ -53,6 +86,10 @@ export const onRequest = async (context: any) => {
 
     // Ensure backwards-compatible columns exist on transactions and users
     await env.DB.prepare("ALTER TABLE transactions ADD COLUMN tx_type TEXT DEFAULT 'deposit'").run().catch(() => {});
+    await env.DB.prepare("ALTER TABLE transactions ADD COLUMN is_voided INTEGER DEFAULT 0").run().catch(() => {});
+    await env.DB.prepare("ALTER TABLE transactions ADD COLUMN void_reason TEXT").run().catch(() => {});
+    await env.DB.prepare("ALTER TABLE transactions ADD COLUMN voided_at DATETIME").run().catch(() => {});
+    await env.DB.prepare("ALTER TABLE transactions ADD COLUMN voided_by TEXT").run().catch(() => {});
     await env.DB.prepare("ALTER TABLE users ADD COLUMN can_withdraw INTEGER DEFAULT 0").run().catch(() => {});
 
     // 1. Health Check
@@ -66,7 +103,7 @@ export const onRequest = async (context: any) => {
         `CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, phone TEXT UNIQUE NOT NULL, role TEXT NOT NULL CHECK (role IN ('admin', 'collector')), password_hash TEXT NOT NULL, can_collect_all INTEGER NOT NULL DEFAULT 0, can_verify_online INTEGER NOT NULL DEFAULT 0, can_withdraw INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, address TEXT, daily_amount REAL NOT NULL DEFAULT 0, assigned_collector_id TEXT, unique_token TEXT UNIQUE NOT NULL, pin TEXT NOT NULL DEFAULT '1234', is_active INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
-        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL CHECK (payment_mode IN ('cash', 'online')), tx_type TEXT NOT NULL DEFAULT 'deposit' CHECK (tx_type IN ('deposit', 'withdrawal')), status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'pending_verification')), utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
+        `CREATE TABLE IF NOT EXISTS transactions (id TEXT PRIMARY KEY, member_id TEXT NOT NULL, collector_id TEXT, amount REAL NOT NULL, payment_mode TEXT NOT NULL, tx_type TEXT NOT NULL DEFAULT 'deposit', status TEXT NOT NULL DEFAULT 'completed', utr_number TEXT, notes TEXT, collection_date TEXT NOT NULL, is_voided INTEGER DEFAULT 0, void_reason TEXT, voided_at DATETIME, voided_by TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS cash_settlements (id TEXT PRIMARY KEY, collector_id TEXT NOT NULL, settlement_date TEXT NOT NULL, cash_collected REAL NOT NULL, cash_submitted REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'discrepancy')), notes TEXT, approved_by TEXT, approved_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE TABLE IF NOT EXISTS deleted_records (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP);`,
         `CREATE INDEX IF NOT EXISTS idx_members_code ON members(code);`,
@@ -77,7 +114,7 @@ export const onRequest = async (context: any) => {
       ];
 
       for (const query of initQueries) {
-        await env.DB.prepare(query).run();
+        await env.DB.prepare(query).run().catch(() => {});
       }
 
       // Upsert default admin & collectors
@@ -95,50 +132,94 @@ export const onRequest = async (context: any) => {
           can_withdraw = excluded.can_withdraw
       `).run();
 
-      // Upsert default sample members
-      const sampleMembers = [
-        ['m-1', 'AC-101', 'Ramesh Sharma', '9811100001', 'Shop No. 4, Market Road', 500, 'u-coll-1', 'ramesh-101'],
-        ['m-2', 'AC-102', 'Sunita Verma', '9811100002', 'B-12, Gandhi Nagar', 200, 'u-coll-1', 'sunita-102'],
-        ['m-3', 'AC-103', 'Mohammad Aslam', '9811100003', 'Old City Chowk', 300, 'u-coll-1', 'aslam-103'],
-        ['m-4', 'AC-104', 'Pooja Gupta', '9811100004', 'Sector 5, Station Road', 250, 'u-coll-2', 'pooja-104'],
-        ['m-5', 'AC-105', 'Faheem Khan', '9811100005', 'Main Market, Near Clock Tower', 400, 'u-coll-2', 'faheem-105'],
-        ['m-6', 'AC-106', 'Vikram Rathore', '9811100006', 'Transport Nagar, Warehouse #3', 600, 'u-coll-2', 'vikram-106'],
-      ];
+      return jsonResponse({ success: true, message: 'D1 Database initialized and verified with standard members and collectors.' });
+    }
 
-      for (const sm of sampleMembers) {
-        await env.DB.prepare(`
-          INSERT INTO members (id, code, name, phone, address, daily_amount, assigned_collector_id, unique_token, pin, is_active)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, '1234', 1)
-          ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            code = excluded.code,
-            phone = excluded.phone,
-            address = excluded.address,
-            daily_amount = excluded.daily_amount,
-            assigned_collector_id = excluded.assigned_collector_id
-        `).bind(sm[0], sm[1], sm[2], sm[3], sm[4], sm[5], sm[6], sm[7]).run();
+    // 2.5. Dedicated Member Passbook Verification Endpoint
+    if (path === 'passbook/verify' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const { token, pin } = body;
+      if (!token) {
+        return jsonResponse({ error: 'Passbook token is required' }, 400);
       }
 
-      // Repair any members with dummy 'Member' names
-      await env.DB.prepare("UPDATE members SET name = 'Mohammad Aslam' WHERE name = 'Member' AND (id = 'm-3' OR id = 'm-101' OR code = 'AC-103')").run();
-      await env.DB.prepare("UPDATE members SET name = 'Ramesh Sharma' WHERE name = 'Member' AND (id = 'm-1' OR code = 'AC-101')").run();
-      await env.DB.prepare("UPDATE members SET name = 'Sunita Verma' WHERE name = 'Member' AND (id = 'm-2' OR code = 'AC-102')").run();
-      await env.DB.prepare("UPDATE members SET name = 'Pooja Gupta' WHERE name = 'Member' AND (id = 'm-4' OR code = 'AC-104')").run();
-      await env.DB.prepare("UPDATE members SET name = 'Faheem Khan' WHERE name = 'Member' AND (id = 'm-5' OR id = 'm-102' OR code = 'AC-105')").run();
-      await env.DB.prepare("UPDATE members SET name = 'Vikram Rathore' WHERE name = 'Member' AND (id = 'm-6' OR code = 'AC-106')").run();
+      const cleanToken = String(token).toLowerCase().trim();
+      const member = await env.DB.prepare('SELECT * FROM members WHERE LOWER(unique_token) = ? AND is_active = 1').bind(cleanToken).first();
+      
+      if (!member) {
+        return jsonResponse({ error: 'Passbook link not found or inactive' }, 404);
+      }
 
-      return jsonResponse({ success: true, message: 'D1 Database initialized and verified with standard members and collectors.' });
+      // Verify PIN securely on server
+      if (member.pin && String(member.pin).trim() !== String(pin).trim()) {
+        return jsonResponse({ success: false, error: 'Incorrect 4-digit security PIN' }, 401);
+      }
+
+      // Fetch only this member's completed / non-voided transactions
+      const txRes = await env.DB.prepare(`
+        SELECT id, member_id, collector_id, amount, payment_mode, tx_type, 
+               CASE WHEN is_voided = 1 THEN 'voided' ELSE status END as status,
+               utr_number, notes, collection_date, created_at
+        FROM transactions 
+        WHERE member_id = ? AND COALESCE(is_voided, 0) = 0
+        ORDER BY created_at DESC
+      `).bind(member.id).all();
+
+      return jsonResponse({
+        success: true,
+        member: {
+          id: member.id,
+          code: member.code,
+          name: member.name,
+          phone: member.phone,
+          address: member.address || '',
+          dailyAmount: Number(member.daily_amount) || 0,
+          uniqueToken: member.unique_token,
+          createdAt: member.created_at,
+        },
+        transactions: (txRes.results || []).map((t: any) => ({
+          id: t.id,
+          memberId: t.member_id,
+          collectorId: t.collector_id,
+          amount: Number(t.amount) || 0,
+          paymentMode: t.payment_mode,
+          txType: t.tx_type || 'deposit',
+          status: t.status,
+          utrNumber: t.utr_number,
+          notes: t.notes,
+          collectionDate: t.collection_date,
+          createdAt: t.created_at,
+        })),
+      });
     }
 
     // 3. Full Data Bootstrap (Sync on App Load)
     if (path === 'bootstrap' && request.method === 'GET') {
-      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
+      const authUser = await getAuthenticatedUser(request, env);
+      const isAdmin = authUser && authUser.role === 'admin';
+
+      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes, memberBalancesRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
         env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
-        env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
+        env.DB.prepare(`
+          SELECT id, member_id, collector_id, amount, payment_mode, tx_type,
+                 CASE WHEN is_voided = 1 THEN 'voided' ELSE status END as status,
+                 utr_number, notes, void_reason, voided_at, voided_by, collection_date, created_at
+          FROM transactions 
+          ORDER BY created_at DESC 
+          LIMIT 25000
+        `).all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
         env.DB.prepare('SELECT id, record_type FROM deleted_records').all().catch(() => ({ results: [] })),
+        env.DB.prepare(`
+          SELECT member_id, 
+            SUM(CASE WHEN (tx_type = 'deposit' OR tx_type IS NULL) AND status = 'completed' AND COALESCE(is_voided, 0) = 0 THEN amount ELSE 0 END) as total_deposited,
+            SUM(CASE WHEN tx_type = 'withdrawal' AND status = 'completed' AND COALESCE(is_voided, 0) = 0 THEN amount ELSE 0 END) as total_withdrawn
+          FROM transactions
+          WHERE status = 'completed' AND COALESCE(is_voided, 0) = 0
+          GROUP BY member_id
+        `).all().catch(() => ({ results: [] })),
       ]);
 
       const deletedMemberIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'member').map((r: any) => r.id);
@@ -153,7 +234,7 @@ export const onRequest = async (context: any) => {
           name: u.name,
           phone: u.phone,
           role: u.role,
-          password: u.password_hash,
+          password: isAdmin ? u.password_hash : undefined,
           canCollectAll: Boolean(u.can_collect_all),
           canVerifyPayments: Boolean(u.can_verify_online),
           canWithdraw: Boolean(u.can_withdraw),
@@ -172,7 +253,7 @@ export const onRequest = async (context: any) => {
           dailyAmount: Number(m.daily_amount) || 0,
           assignedCollectorId: m.assigned_collector_id || '',
           uniqueToken: m.unique_token,
-          pin: m.pin || '1234',
+          pin: isAdmin ? (m.pin || '1234') : undefined,
           isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
           createdAt: m.created_at,
         }));
@@ -187,6 +268,9 @@ export const onRequest = async (context: any) => {
         status: t.status,
         utrNumber: t.utr_number || undefined,
         notes: t.notes || undefined,
+        voidReason: t.void_reason || undefined,
+        voidedAt: t.voided_at || undefined,
+        voidedBy: t.voided_by || undefined,
         collectionDate: t.collection_date,
         createdAt: t.created_at,
       }));
@@ -204,12 +288,20 @@ export const onRequest = async (context: any) => {
         createdAt: s.created_at,
       }));
 
+      const memberBalances = (memberBalancesRes.results || []).map((b: any) => ({
+        memberId: b.member_id,
+        totalDeposited: Number(b.total_deposited) || 0,
+        totalWithdrawn: Number(b.total_withdrawn) || 0,
+        netBalance: (Number(b.total_deposited) || 0) - (Number(b.total_withdrawn) || 0),
+      }));
+
       return jsonResponse({
         settings: settingsRes.results || [],
         users,
         members,
         transactions,
         settlements,
+        memberBalances,
         deletedMemberIds,
         deletedUserIds,
       });
@@ -217,19 +309,22 @@ export const onRequest = async (context: any) => {
 
     // 3.5. Two-Way Sync Endpoint (Pushes unsynced local data and pulls latest cloud state)
     if (path === 'sync' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      const isAdmin = authUser && authUser.role === 'admin';
+
       const body = await request.json().catch(() => ({}));
       const { localTransactions, localMembers, deletedMemberIds: clientDelMembers, deletedUserIds: clientDelUsers } = body as any;
 
-      // Handle client deletions first
-      if (Array.isArray(clientDelMembers) && clientDelMembers.length > 0) {
+      // Handle client deletions: Only Super Admin can delete records
+      if (isAdmin && Array.isArray(clientDelMembers) && clientDelMembers.length > 0) {
         for (const id of clientDelMembers) {
           await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "member")').bind(id).run().catch(() => {});
-          await env.DB.prepare('DELETE FROM transactions WHERE member_id = ?').bind(id).run().catch(() => {});
+          // Note: PRESERVE transactions ledger! Soft-delete member record only!
           await env.DB.prepare('DELETE FROM members WHERE id = ?').bind(id).run().catch(() => {});
         }
       }
 
-      if (Array.isArray(clientDelUsers) && clientDelUsers.length > 0) {
+      if (isAdmin && Array.isArray(clientDelUsers) && clientDelUsers.length > 0) {
         for (const id of clientDelUsers) {
           await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "user")').bind(id).run().catch(() => {});
           await env.DB.prepare('UPDATE members SET assigned_collector_id = NULL WHERE assigned_collector_id = ?').bind(id).run().catch(() => {});
@@ -274,7 +369,7 @@ export const onRequest = async (context: any) => {
         }
       }
 
-      // Upsert any local transactions if sent
+      // Upsert all local transactions if sent (Sync without 50-item truncation)
       if (Array.isArray(localTransactions) && localTransactions.length > 0) {
         for (const tx of localTransactions) {
           try {
@@ -283,7 +378,7 @@ export const onRequest = async (context: any) => {
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(id) DO UPDATE SET
                 tx_type = excluded.tx_type,
-                status = excluded.status,
+                status = CASE WHEN transactions.is_voided = 1 THEN 'voided' ELSE excluded.status END,
                 utr_number = excluded.utr_number,
                 notes = excluded.notes
             `).bind(
@@ -305,22 +400,29 @@ export const onRequest = async (context: any) => {
         }
       }
 
-      // Quick repair of any 'Member' name artifacts
-      await env.DB.prepare("UPDATE members SET name = 'Mohammad Aslam' WHERE name = 'Member' AND (id = 'm-3' OR id = 'm-101' OR code = 'AC-103')").run().catch(() => {});
-      await env.DB.prepare("UPDATE members SET name = 'Ramesh Sharma' WHERE name = 'Member' AND (id = 'm-1' OR code = 'AC-101')").run().catch(() => {});
-      await env.DB.prepare("UPDATE members SET name = 'Sunita Verma' WHERE name = 'Member' AND (id = 'm-2' OR code = 'AC-102')").run().catch(() => {});
-      await env.DB.prepare("UPDATE members SET name = 'Pooja Gupta' WHERE name = 'Member' AND (id = 'm-4' OR code = 'AC-104')").run().catch(() => {});
-      await env.DB.prepare("UPDATE members SET name = 'Faheem Khan' WHERE name = 'Member' AND (id = 'm-5' OR id = 'm-102' OR code = 'AC-105')").run().catch(() => {});
-      await env.DB.prepare("UPDATE members SET name = 'Vikram Rathore' WHERE name = 'Member' AND (id = 'm-6' OR code = 'AC-106')").run().catch(() => {});
-
       // Fetch and return full latest cloud state
-      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes] = await Promise.all([
+      const [settingsRes, usersRes, membersRes, txRes, settlementsRes, deletedRes, memberBalancesRes] = await Promise.all([
         env.DB.prepare('SELECT key, value FROM app_settings').all(),
         env.DB.prepare('SELECT id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active, created_at FROM users').all(),
         env.DB.prepare('SELECT * FROM members ORDER BY created_at DESC').all(),
-        env.DB.prepare('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 5000').all(),
+        env.DB.prepare(`
+          SELECT id, member_id, collector_id, amount, payment_mode, tx_type,
+                 CASE WHEN is_voided = 1 THEN 'voided' ELSE status END as status,
+                 utr_number, notes, void_reason, voided_at, voided_by, collection_date, created_at
+          FROM transactions 
+          ORDER BY created_at DESC 
+          LIMIT 25000
+        `).all(),
         env.DB.prepare('SELECT * FROM cash_settlements ORDER BY settlement_date DESC LIMIT 1000').all(),
         env.DB.prepare('SELECT id, record_type FROM deleted_records').all().catch(() => ({ results: [] })),
+        env.DB.prepare(`
+          SELECT member_id, 
+            SUM(CASE WHEN (tx_type = 'deposit' OR tx_type IS NULL) AND status = 'completed' AND COALESCE(is_voided, 0) = 0 THEN amount ELSE 0 END) as total_deposited,
+            SUM(CASE WHEN tx_type = 'withdrawal' AND status = 'completed' AND COALESCE(is_voided, 0) = 0 THEN amount ELSE 0 END) as total_withdrawn
+          FROM transactions
+          WHERE status = 'completed' AND COALESCE(is_voided, 0) = 0
+          GROUP BY member_id
+        `).all().catch(() => ({ results: [] })),
       ]);
 
       const deletedMemberIds = (deletedRes.results || []).filter((r: any) => r.record_type === 'member').map((r: any) => r.id);
@@ -335,7 +437,7 @@ export const onRequest = async (context: any) => {
           name: u.name,
           phone: u.phone,
           role: u.role,
-          password: u.password_hash,
+          password: isAdmin ? u.password_hash : undefined,
           canCollectAll: Boolean(u.can_collect_all),
           canVerifyPayments: Boolean(u.can_verify_online),
           canWithdraw: Boolean(u.can_withdraw),
@@ -354,7 +456,7 @@ export const onRequest = async (context: any) => {
           dailyAmount: Number(m.daily_amount) || 0,
           assignedCollectorId: m.assigned_collector_id || '',
           uniqueToken: m.unique_token,
-          pin: m.pin || '1234',
+          pin: isAdmin ? (m.pin || '1234') : undefined,
           isActive: Boolean(m.is_active === 1 || m.is_active === true || m.is_active === undefined),
           createdAt: m.created_at,
         }));
@@ -369,6 +471,9 @@ export const onRequest = async (context: any) => {
         status: t.status,
         utrNumber: t.utr_number || undefined,
         notes: t.notes || undefined,
+        voidReason: t.void_reason || undefined,
+        voidedAt: t.voided_at || undefined,
+        voidedBy: t.voided_by || undefined,
         collectionDate: t.collection_date,
         createdAt: t.created_at,
       }));
@@ -386,12 +491,20 @@ export const onRequest = async (context: any) => {
         createdAt: s.created_at,
       }));
 
+      const memberBalances = (memberBalancesRes.results || []).map((b: any) => ({
+        memberId: b.member_id,
+        totalDeposited: Number(b.total_deposited) || 0,
+        totalWithdrawn: Number(b.total_withdrawn) || 0,
+        netBalance: (Number(b.total_deposited) || 0) - (Number(b.total_withdrawn) || 0),
+      }));
+
       return jsonResponse({
         settings: settingsRes.results || [],
         users,
         members,
         transactions,
         settlements,
+        memberBalances,
         deletedMemberIds,
         deletedUserIds,
       });
@@ -399,10 +512,15 @@ export const onRequest = async (context: any) => {
 
     // 4. Save/Update Transaction
     if (path === 'transactions' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser) {
+        return jsonResponse({ error: 'Unauthorized: Active user session required' }, 401);
+      }
+
       const body = await request.json();
       const { id, memberId, collectorId, amount, paymentMode, txType, status, utrNumber, notes, collectionDate, createdAt } = body;
 
-      // Auto-create member in D1 if not existing
+      // Ensure member exists
       const memberExists = await env.DB.prepare('SELECT id FROM members WHERE id = ?').bind(memberId).first();
       if (!memberExists) {
         await env.DB.prepare(`
@@ -423,7 +541,7 @@ export const onRequest = async (context: any) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           tx_type = excluded.tx_type,
-          status = excluded.status,
+          status = CASE WHEN transactions.is_voided = 1 THEN 'voided' ELSE excluded.status END,
           utr_number = excluded.utr_number,
           notes = excluded.notes
       `).bind(
@@ -445,20 +563,63 @@ export const onRequest = async (context: any) => {
 
     // 5. Verify / Approve Transaction
     if (path === 'transactions/verify' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser) {
+        return jsonResponse({ error: 'Unauthorized: Session required' }, 401);
+      }
+      if (authUser.role !== 'admin' && !authUser.can_verify_online) {
+        return jsonResponse({ error: 'Unauthorized: Verification permission required' }, 403);
+      }
+
       const body = await request.json();
       const { transactionId } = body;
 
       await env.DB.prepare(`
         UPDATE transactions 
         SET status = 'completed' 
-        WHERE id = ?
+        WHERE id = ? AND COALESCE(is_voided, 0) = 0
       `).bind(transactionId).run();
 
       return jsonResponse({ success: true, message: 'Transaction verified successfully' });
     }
 
+    // 5.5. Void / Cancel Transaction (Super Admin Only Audit Trail)
+    if (path === 'transactions/void' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser || authUser.role !== 'admin') {
+        return jsonResponse({ error: 'Unauthorized: Only Super Admin can void transactions' }, 403);
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const { transactionId, voidReason } = body;
+      if (!transactionId || !voidReason) {
+        return jsonResponse({ error: 'Transaction ID and void reason are required' }, 400);
+      }
+
+      try {
+        await env.DB.prepare(`
+          UPDATE transactions 
+          SET status = 'voided', is_voided = 1, void_reason = ?, voided_at = CURRENT_TIMESTAMP, voided_by = ?
+          WHERE id = ?
+        `).bind(voidReason.trim(), authUser.name, transactionId).run();
+      } catch {
+        await env.DB.prepare(`
+          UPDATE transactions 
+          SET is_voided = 1, void_reason = ?, voided_at = CURRENT_TIMESTAMP, voided_by = ?
+          WHERE id = ?
+        `).bind(voidReason.trim(), authUser.name, transactionId).run();
+      }
+
+      return jsonResponse({ success: true, message: 'Transaction voided and recorded in audit trail successfully', transactionId });
+    }
+
     // 6. Save/Update Member
     if (path === 'members' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser) {
+        return jsonResponse({ error: 'Unauthorized: Active user session required' }, 401);
+      }
+
       const body = await request.json();
       const { id, code, name, phone, address, dailyAmount, assignedCollectorId, uniqueToken, pin, isActive } = body;
 
@@ -472,7 +633,7 @@ export const onRequest = async (context: any) => {
           address = excluded.address,
           daily_amount = excluded.daily_amount,
           assigned_collector_id = excluded.assigned_collector_id,
-          pin = excluded.pin,
+          pin = CASE WHEN excluded.pin != '' AND excluded.pin != '****' THEN excluded.pin ELSE members.pin END,
           is_active = excluded.is_active
       `).bind(
         id,
@@ -490,8 +651,13 @@ export const onRequest = async (context: any) => {
       return jsonResponse({ success: true, id });
     }
 
-    // 6.1. Delete Member
+    // 6.1. Delete Member (Super Admin Only; Preserves Financial Ledger)
     if (path === 'members' && request.method === 'DELETE') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser || authUser.role !== 'admin') {
+        return jsonResponse({ error: 'Unauthorized: Only Super Admin can delete members' }, 403);
+      }
+
       let id = url.searchParams.get('id');
       if (!id) {
         const body = await request.json().catch(() => ({}));
@@ -499,15 +665,22 @@ export const onRequest = async (context: any) => {
       }
       if (!id) return jsonResponse({ error: 'Member id is required' }, 400);
 
+      // Track deletion
       await env.DB.prepare('INSERT OR REPLACE INTO deleted_records (id, record_type) VALUES (?, "member")').bind(id).run().catch(() => {});
-      await env.DB.prepare('DELETE FROM transactions WHERE member_id = ?').bind(id).run().catch(() => {});
+      
+      // Preserve transactions ledger! Only remove member record from active member roster
       await env.DB.prepare('DELETE FROM members WHERE id = ?').bind(id).run().catch(() => {});
 
-      return jsonResponse({ success: true, message: 'Member deleted successfully', id });
+      return jsonResponse({ success: true, message: 'Member removed from active list; transaction history preserved in ledger', id });
     }
 
     // 7. Save/Update Cash Settlement
     if (path === 'settlements' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser) {
+        return jsonResponse({ error: 'Unauthorized: Session required' }, 401);
+      }
+
       const body = await request.json();
       const { id, collectorId, settlementDate, cashCollected, cashSubmitted, status, notes, approvedBy, approvedAt, createdAt } = body;
 
@@ -539,9 +712,21 @@ export const onRequest = async (context: any) => {
 
     // 8. Save/Update User / Collector
     if (path === 'users' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
       const body = await request.json();
       const { id, name, phone, role, password, canCollectAll, canVerifyOnline, canWithdraw, isActive } = body;
       const cleanPassword = password ? String(password).trim() : '';
+
+      // Check permissions: Modifying admin requires admin auth
+      if (role === 'admin' || id === 'u-admin-1') {
+        if (!authUser || authUser.role !== 'admin') {
+          return jsonResponse({ error: 'Unauthorized: Only Super Admin can modify admin account' }, 403);
+        }
+      } else {
+        if (!authUser || authUser.role !== 'admin') {
+          return jsonResponse({ error: 'Unauthorized: Only Super Admin can create or modify collectors' }, 403);
+        }
+      }
 
       await env.DB.prepare(`
         INSERT INTO users (id, name, phone, role, password_hash, can_collect_all, can_verify_online, can_withdraw, is_active)
@@ -571,6 +756,11 @@ export const onRequest = async (context: any) => {
 
     // 8.1. Delete Collector / User
     if (path === 'users' && request.method === 'DELETE') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser || authUser.role !== 'admin') {
+        return jsonResponse({ error: 'Unauthorized: Only Super Admin can delete collectors' }, 403);
+      }
+
       let id = url.searchParams.get('id');
       if (!id) {
         const body = await request.json().catch(() => ({}));
@@ -588,6 +778,24 @@ export const onRequest = async (context: any) => {
       await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run().catch(() => {});
 
       return jsonResponse({ success: true, message: 'Collector deleted successfully', id });
+    }
+
+    // 9. Update Settings
+    if (path === 'settings' && request.method === 'POST') {
+      const authUser = await getAuthenticatedUser(request, env);
+      if (!authUser || authUser.role !== 'admin') {
+        return jsonResponse({ error: 'Unauthorized: Only Super Admin can change settings' }, 403);
+      }
+
+      const body = await request.json();
+      for (const [key, value] of Object.entries(body)) {
+        await env.DB.prepare(`
+          INSERT INTO app_settings (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).bind(key, String(value)).run();
+      }
+
+      return jsonResponse({ success: true, message: 'Settings updated' });
     }
 
     return jsonResponse({ error: `Endpoint /api/${path} not found` }, 404);

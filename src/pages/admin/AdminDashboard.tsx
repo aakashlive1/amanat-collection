@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { store } from '../../services/store';
 import { StatCard } from '../../components/StatCard';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
+import { Transaction } from '../../types';
 import {
   Wallet,
   Banknote,
@@ -14,6 +15,8 @@ import {
   Clock,
   FileSpreadsheet,
   ArrowDownCircle,
+  Ban,
+  X,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -21,6 +24,25 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
+  const authUser = store.getAuthUser();
+  const [voidModalTx, setVoidModalTx] = useState<Transaction | null>(null);
+  const [voidReason, setVoidReason] = useState('');
+  const [isVoiding, setIsVoiding] = useState(false);
+
+  const handleConfirmVoid = () => {
+    if (!voidModalTx || !voidReason.trim() || !authUser) return;
+    setIsVoiding(true);
+    try {
+      store.voidTransaction(voidModalTx.id, voidReason.trim(), authUser);
+      setVoidModalTx(null);
+      setVoidReason('');
+    } catch {
+      alert('Failed to void transaction');
+    } finally {
+      setIsVoiding(false);
+    }
+  };
+
   const stats = store.getTodayAdminStats();
   const allMembers = store.getMembers();
   const collectors = store.getCollectors();
@@ -285,19 +307,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
                       Collector: {collector?.name || 'Direct Online'} • {formatDateTime(tx.createdAt)}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-black text-emerald-700 block">
-                      +{formatCurrency(tx.amount)}
-                    </span>
-                    <span
-                      className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                        tx.paymentMode === 'cash'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}
-                    >
-                      {tx.paymentMode === 'cash' ? 'Cash' : 'Online'}
-                    </span>
+                  <div className="flex items-center space-x-2">
+                    <div className="text-right">
+                      <span className={`text-sm font-black block ${tx.txType === 'withdrawal' ? 'text-amber-600' : 'text-emerald-700'}`}>
+                        {tx.txType === 'withdrawal' ? '-' : '+'}{formatCurrency(tx.amount)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          tx.paymentMode === 'cash'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}
+                      >
+                        {tx.paymentMode === 'cash' ? 'Cash' : 'Online'}
+                      </span>
+                    </div>
+                    {authUser?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVoidModalTx(tx);
+                          setVoidReason('');
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                        title="Void / Cancel this accidental entry"
+                      >
+                        <Ban className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -305,6 +342,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
           )}
         </div>
       </div>
+
+      {/* Super Admin Void Confirmation Modal */}
+      {voidModalTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center space-x-2 text-rose-600 font-bold">
+                <Ban className="w-5 h-5" />
+                <span>Void Transaction Entry</span>
+              </div>
+              <button onClick={() => setVoidModalTx(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-rose-50 p-3 rounded-xl border border-rose-200 text-xs text-rose-800">
+              <p className="font-bold">⚠️ Warning: Financial Audit Action</p>
+              <p className="mt-1">
+                Voiding will cancel this <strong>{voidModalTx.txType === 'withdrawal' ? 'payout' : 'collection'} of {formatCurrency(voidModalTx.amount)}</strong>. It will be removed from member net balance and daily collection stats. A permanent audit entry with your name will be recorded.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Reason for Voiding (Required)
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={voidReason}
+                onChange={e => setVoidReason(e.target.value)}
+                placeholder="e.g. Collector typed 5000 instead of 500 by mistake; correction recorded."
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-200 resize-none"
+              />
+            </div>
+
+            <div className="flex space-x-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setVoidModalTx(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 font-bold text-slate-700 text-xs rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!voidReason.trim() || isVoiding}
+                onClick={handleConfirmVoid}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-md transition disabled:opacity-50"
+              >
+                {isVoiding ? 'Voiding...' : 'Confirm Void'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

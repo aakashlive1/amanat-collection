@@ -22,8 +22,14 @@ interface MemberPassbookProps {
 }
 
 export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
-  const member = store.getMemberByToken(token);
+  const localMember = store.getMemberByToken(token);
   const settings = store.getSettings();
+
+  const [serverMember, setServerMember] = useState<any>(null);
+  const [serverTransactions, setServerTransactions] = useState<any[] | null>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  const member = serverMember || localMember;
 
   const [enteredPin, setEnteredPin] = useState('');
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -36,30 +42,45 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
   const [utrNumber, setUtrNumber] = useState('');
   const [submittedUtr, setSubmittedUtr] = useState(false);
 
-  if (!member) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 text-center max-w-sm">
-          <p className="text-sm font-bold text-rose-600">
-            ⚠️ Invalid or expired passbook link.
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Please check your URL or contact Amanat Collection support.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const handlePinSubmit = (e: React.FormEvent) => {
+  const handlePinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (enteredPin === member.pin) {
+    if (enteredPin.length < 4) return;
+    setIsVerifying(true);
+    setPinError(false);
+
+    try {
+      const res = await fetch('/api/passbook/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, pin: enteredPin }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.member) {
+          setServerMember(data.member);
+          setServerTransactions(data.transactions);
+          if (data.member.dailyAmount) {
+            setPayAmount(data.member.dailyAmount);
+          }
+          setIsUnlocked(true);
+          setIsVerifying(false);
+          return;
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+
+    // Offline / local store fallback check
+    if (localMember && localMember.pin && enteredPin === localMember.pin) {
       setIsUnlocked(true);
       setPinError(false);
     } else {
       setPinError(true);
       setEnteredPin('');
     }
+    setIsVerifying(false);
   };
 
   // If locked, show 4-digit PIN gate
@@ -79,8 +100,10 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
           </p>
 
           <div className="my-5 p-3 bg-slate-50 rounded-2xl border border-slate-100">
-            <p className="text-xs font-bold text-slate-700">{member.name}</p>
-            <p className="text-[11px] font-mono text-slate-500">Member Code: {member.code}</p>
+            <p className="text-xs font-bold text-slate-700">{member?.name || 'Customer Passbook'}</p>
+            <p className="text-[11px] font-mono text-slate-500">
+              {member?.code ? `Member Code: ${member.code}` : `Token: ${token}`}
+            </p>
           </div>
 
           <form onSubmit={handlePinSubmit} className="space-y-4">
@@ -94,10 +117,11 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
                 maxLength={4}
                 required
                 autoFocus
+                disabled={isVerifying}
                 value={enteredPin}
                 onChange={e => setEnteredPin(e.target.value.replace(/[^0-9]/g, ''))}
                 placeholder="• • • •"
-                className="w-full text-center py-3 text-2xl font-mono font-black tracking-widest bg-slate-100 border border-slate-200 rounded-2xl text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden transition"
+                className="w-full text-center py-3 text-2xl font-mono font-black tracking-widest bg-slate-100 border border-slate-200 rounded-2xl text-slate-900 focus:bg-white focus:border-emerald-500 outline-hidden transition disabled:opacity-50"
               />
               {pinError && (
                 <p className="text-xs font-bold text-rose-600 mt-1.5">
@@ -108,15 +132,31 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
 
             <button
               type="submit"
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 flex items-center justify-center space-x-2 transition"
+              disabled={isVerifying || enteredPin.length < 4}
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 flex items-center justify-center space-x-2 transition disabled:opacity-50"
             >
               <Unlock className="w-4 h-4" />
-              <span>Unlock Passbook</span>
+              <span>{isVerifying ? 'Verifying...' : 'Unlock Passbook'}</span>
             </button>
           </form>
 
           <p className="text-[11px] text-slate-400 mt-4">
             Forgot your PIN? Contact your collector or admin.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!member) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 text-center max-w-sm">
+          <p className="text-sm font-bold text-rose-600">
+            ⚠️ Invalid or expired passbook link.
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            Please check your URL or contact Amanat Collection support.
           </p>
         </div>
       </div>
@@ -165,14 +205,23 @@ export const MemberPassbook: React.FC<MemberPassbookProps> = ({ token }) => {
     setShowUtrForm(false);
   };
 
-  const transactions = store.getMemberTransactions(member.id);
-  const balanceInfo = store.getMemberBalance(member.id);
+  const transactions = serverTransactions || store.getMemberTransactions(member.id);
+  const deposits = transactions.filter((t: any) => (t.txType === 'deposit' || !t.txType) && t.status === 'completed');
+  const withdrawals = transactions.filter((t: any) => t.txType === 'withdrawal' && t.status === 'completed');
+  const totalDeposited = deposits.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0);
+  const totalWithdrawn = withdrawals.reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0);
+  const netBalance = Math.max(0, totalDeposited - totalWithdrawn);
+  const balanceInfo = {
+    totalDeposited,
+    totalWithdrawn,
+    netBalance,
+  };
 
   const pendingVerificationAmount = transactions
-    .filter(t => t.status === 'pending_verification')
-    .reduce((acc, t) => acc + t.amount, 0);
+    .filter((t: any) => t.status === 'pending_verification')
+    .reduce((acc: number, t: any) => acc + (Number(t.amount) || 0), 0);
 
-  const pendingCount = transactions.filter(t => t.status === 'pending_verification').length;
+  const pendingCount = transactions.filter((t: any) => t.status === 'pending_verification').length;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-16">

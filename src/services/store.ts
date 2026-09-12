@@ -39,11 +39,25 @@ class DataStore {
     }
   }
 
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const user = this.get<User | null>(STORAGE_KEYS.AUTH_USER, null);
+    if (user) {
+      try {
+        const token = btoa(JSON.stringify({ id: user.id, role: user.role, phone: user.phone, t: Date.now() }));
+        headers['Authorization'] = `Bearer ${token}`;
+      } catch {
+        // ignore
+      }
+    }
+    return headers;
+  }
+
   private async postApi(endpoint: string, data: unknown) {
     try {
       await fetch(`/api/${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(data),
       });
     } catch {
@@ -55,7 +69,7 @@ class DataStore {
     try {
       await fetch(`/api/${endpoint}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify(data),
       });
     } catch {
@@ -94,10 +108,10 @@ class DataStore {
       try {
         const res = await fetch('/api/sync', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.getAuthHeaders(),
           body: JSON.stringify({
-            localTransactions: localTransactions.slice(0, 50),
-            localMembers: localMembers.slice(0, 50),
+            localTransactions, // Full transactions list, no 50-limit truncation
+            localMembers,      // Full members list, no 50-limit truncation
             deletedMemberIds: this.getDeletedMemberIds(),
             deletedUserIds: this.getDeletedUserIds(),
           }),
@@ -110,7 +124,9 @@ class DataStore {
       }
 
       if (!data) {
-        const bootstrapRes = await fetch('/api/bootstrap').catch(() => null);
+        const bootstrapRes = await fetch('/api/bootstrap', {
+          headers: this.getAuthHeaders(),
+        }).catch(() => null);
         if (bootstrapRes && bootstrapRes.ok) {
           data = await bootstrapRes.json();
         }
@@ -234,7 +250,20 @@ class DataStore {
 
   // Auth User
   getAuthUser(): User | null {
-    return this.get<User | null>(STORAGE_KEYS.AUTH_USER, null);
+    const user = this.get<User | null>(STORAGE_KEYS.AUTH_USER, null);
+    if (!user) return null;
+
+    // Cross-verify role against registered users to prevent localStorage role-spoofing attacks
+    const users = this.getUsers();
+    const realUser = users.find(u => u.id === user.id);
+    if (realUser) {
+      if (user.role !== realUser.role) {
+        user.role = realUser.role;
+        user.name = realUser.name;
+        this.set(STORAGE_KEYS.AUTH_USER, user);
+      }
+    }
+    return user;
   }
 
   setAuthUser(user: User | null): void {
@@ -523,9 +552,16 @@ class DataStore {
       this.set(STORAGE_KEYS.MEMBERS, updated);
       savedMember = updated.find(m => m.id === memberData.id)!;
     } else {
-      // Auto-generate code if not provided
-      const nextCodeNumber = members.length + 101;
-      const code = memberData.code?.trim() || `AC-${nextCodeNumber}`;
+      // Auto-generate unique code by finding highest existing numeric AC code to prevent collisions
+      const maxCodeNumber = members.reduce((max, m) => {
+        const match = m.code?.match(/AC-(\d+)/i);
+        if (match) {
+          const val = parseInt(match[1], 10);
+          return val > max ? val : max;
+        }
+        return max;
+      }, 100);
+      const code = memberData.code?.trim() || `AC-${maxCodeNumber + 1}`;
       const token = (memberData.name.toLowerCase().replace(/[^a-z0-9]/g, '') + '-' + Math.floor(100 + Math.random() * 900));
 
       const newMember: Member = {
@@ -564,13 +600,17 @@ class DataStore {
 
   deleteMember(id: string): { success: boolean; message: string } {
     const members = this.getMembers();
+    const target = members.find(m => m.id === id);
+    if (!target) {
+      return { success: false, message: 'Member not found' };
+    }
+
+    // Remove from active members list
     const updatedMembers = members.filter(m => m.id !== id);
     this.set(STORAGE_KEYS.MEMBERS, updatedMembers);
 
-    // Also remove any transactions for this member
-    const transactions = this.getTransactions();
-    const updatedTransactions = transactions.filter(t => t.memberId !== id);
-    this.set(STORAGE_KEYS.TRANSACTIONS, updatedTransactions);
+    // NOTE: In financial accounting, we PRESERVE historical transactions!
+    // Transactions are never erased so daily collections, cash-in-hand, and audit trails remain intact.
 
     // Track in deleted IDs
     this.addDeletedMemberId(id);
@@ -578,7 +618,41 @@ class DataStore {
     // Sync deletion to cloud D1
     this.deleteApi('members', { id });
 
-    return { success: true, message: 'Member deleted successfully' };
+    return { success: true, message: 'Member removed from active roster. Financial history preserved in ledger.' };
+  }
+
+  voidTransaction(transactionId: string, reason: string, adminUser: User): { success: boolean; message: string } {
+    const transactions = this.getTransactions();
+    const target = transactions.find(t => t.id === transactionId);
+    if (!target) {
+      return { success: false, message: 'Transaction not found' };
+    }
+    if (target.status === 'voided') {
+      return { success: false, message: 'Transaction is already voided' };
+    }
+
+    const updated = transactions.map(t => {
+      if (t.id === transactionId) {
+        return {
+          ...t,
+          status: 'voided' as const,
+          voidReason: reason.trim(),
+          voidedAt: new Date().toISOString(),
+          voidedBy: adminUser.name,
+        };
+      }
+      return t;
+    });
+
+    this.set(STORAGE_KEYS.TRANSACTIONS, updated);
+
+    // Push void to cloud D1
+    this.postApi('transactions/void', {
+      transactionId,
+      voidReason: reason.trim(),
+    });
+
+    return { success: true, message: 'Transaction voided and recorded in audit trail successfully' };
   }
 
   updateMemberDailyAmount(id: string, newAmount: number): void {

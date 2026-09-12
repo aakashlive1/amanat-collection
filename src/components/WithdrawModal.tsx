@@ -37,15 +37,27 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
   const [completedTxId, setCompletedTxId] = useState<string | null>(null);
   const [recordedAmount, setRecordedAmount] = useState<number>(0);
 
+  // Synchronous lock to prevent mobile fast double-tap duplicate submissions
+  const submittingLockRef = React.useRef(false);
+
+  // Collector physical cash in hand check
+  const isCollector = processedBy.role === 'collector';
+  const collectorStats = isCollector ? store.getCollectorTodayStats(processedBy.id) : null;
+  const collectorCashInHand = collectorStats ? Math.max(0, collectorStats.cashCollected) : 0;
+
   const netBalance = balanceInfo.netBalance;
   const numAmount = Number(amount) || 0;
   const isOverBalance = numAmount > netBalance;
+  const isOverCashInHand = isCollector && paymentMode === 'cash' && numAmount > collectorCashInHand;
   const remainingBalanceAfter = Math.max(0, netBalance - (completedTxId ? recordedAmount : numAmount));
 
   const quickPresets = [500, 1000, 2000, 5000].filter(val => val <= netBalance);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (submittingLockRef.current || isSubmitting) return;
+
     if (numAmount <= 0) {
       alert('Please enter a valid amount greater than 0');
       return;
@@ -56,6 +68,18 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       return;
     }
 
+    // Loophole 4: Block negative collector cash in hand
+    if (isCollector && paymentMode === 'cash') {
+      if (numAmount > collectorCashInHand) {
+        alert(
+          `Insufficient Cash in Hand! You currently hold ${formatCurrency(collectorCashInHand)} physical cash collected today. ` +
+          `You cannot pay out ${formatCurrency(numAmount)} in cash. Please choose Online payout or ask Super Admin.`
+        );
+        return;
+      }
+    }
+
+    submittingLockRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -77,6 +101,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
       console.error(err);
       alert('Failed to process withdrawal');
     } finally {
+      submittingLockRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -301,6 +326,20 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
                     <span>Bank / Online UPI</span>
                   </button>
                 </div>
+                {isCollector && paymentMode === 'cash' && (
+                  <div className={`mt-2 p-2.5 rounded-xl text-xs flex items-center justify-between font-bold ${
+                    isOverCashInHand ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                  }`}>
+                    <span>Collector Physical Cash in Hand Today:</span>
+                    <span className="font-black font-mono">{formatCurrency(collectorCashInHand)}</span>
+                  </div>
+                )}
+                {isOverCashInHand && (
+                  <p className="mt-1 text-xs font-bold text-rose-600 flex items-center space-x-1">
+                    <AlertCircle className="w-3.5 h-3.5 inline mr-1" />
+                    Cannot exceed your today's physical cash in hand of {formatCurrency(collectorCashInHand)}. Choose Online Payout or ask Super Admin.
+                  </p>
+                )}
               </div>
 
               {/* Optional UTR for online payout */}
@@ -347,7 +386,7 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={isSubmitting || netBalance <= 0 || numAmount <= 0 || isOverBalance}
+                  disabled={isSubmitting || netBalance <= 0 || numAmount <= 0 || isOverBalance || isOverCashInHand}
                   className="w-full flex items-center justify-center space-x-2 py-3.5 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl font-bold shadow-md shadow-amber-200 transition active:scale-[0.98]"
                 >
                   <span>{isSubmitting ? 'Processing Payout...' : 'Confirm & Process Payout'}</span>

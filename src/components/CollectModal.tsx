@@ -26,13 +26,20 @@ export const CollectModal: React.FC<CollectModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [completedTxId, setCompletedTxId] = useState<string | null>(null);
 
+  // Synchronous lock to prevent fast double-tap duplicate submissions on mobile
+  const submittingLockRef = React.useRef(false);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (submittingLockRef.current || isSubmitting) return;
+
     if (amount <= 0) {
       alert('Please enter an amount greater than 0');
       return;
     }
 
+    submittingLockRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -63,6 +70,7 @@ export const CollectModal: React.FC<CollectModalProps> = ({
       console.error(err);
       alert('Failed to record collection');
     } finally {
+      submittingLockRef.current = false;
       setIsSubmitting(false);
     }
   };

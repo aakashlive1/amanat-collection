@@ -28,7 +28,7 @@ export interface Member {
 }
 
 export type PaymentMode = 'cash' | 'online';
-export type PaymentStatus = 'completed' | 'pending_verification' | 'rejected';
+export type PaymentStatus = 'completed' | 'pending_verification' | 'rejected' | 'voided';
 export type TransactionType = 'deposit' | 'withdrawal';
 
 export interface Transaction {
@@ -44,6 +44,9 @@ export interface Transaction {
   verifiedBy?: string; // User ID who verified against bank statement
   verifiedAt?: string;
   rejectionReason?: string;
+  voidReason?: string;
+  voidedAt?: string;
+  voidedBy?: string;
   collectionDate: string; // YYYY-MM-DD
   createdAt: string;
 }
