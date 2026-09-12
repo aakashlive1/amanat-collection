@@ -24,10 +24,18 @@ import { OnlineVerifications } from './components/OnlineVerifications';
 // Member Passbook Page
 import { MemberPassbook } from './pages/member/MemberPassbook';
 
+// Public Landing Page
+import { LandingPage } from './pages/LandingPage';
+
 export function App() {
   useStoreUpdate(); // Reactive re-render on any store change
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => store.getAuthUser());
+  const [viewLanding, setViewLanding] = useState<boolean>(() => !store.getAuthUser());
+  const [showLogin, setShowLogin] = useState<boolean>(() => {
+    return window.location.hash === '#/login' || window.location.pathname === '/login';
+  });
+
   const [activeTab, setActiveTab] = useState<string>(() => {
     const authUser = store.getAuthUser();
     if (!authUser) return 'dashboard';
@@ -70,6 +78,10 @@ export function App() {
       } else {
         setMemberToken(null);
       }
+
+      if (hash === '#/login' || pathname === '/login') {
+        setShowLogin(true);
+      }
     };
 
     handleHashChange();
@@ -80,6 +92,8 @@ export function App() {
   const handleLogin = (user: User) => {
     store.setAuthUser(user);
     setCurrentUser(user);
+    setShowLogin(false);
+    setViewLanding(false);
     const defaultTab = user.role === 'admin' ? 'dashboard' : 'collect';
     const saved = localStorage.getItem(`amanat_active_tab_${user.role}`) || defaultTab;
     setActiveTab(saved);
@@ -88,11 +102,15 @@ export function App() {
   const handleLogout = () => {
     store.logout();
     setCurrentUser(null);
+    setShowLogin(false);
+    setViewLanding(true);
   };
 
   const handleSelectUser = (user: User) => {
     store.setAuthUser(user);
     setCurrentUser(user);
+    setShowLogin(false);
+    setViewLanding(false);
     const defaultTab = user.role === 'admin' ? 'dashboard' : 'collect';
     const saved = localStorage.getItem(`amanat_active_tab_${user.role}`) || defaultTab;
     setActiveTab(saved);
@@ -107,11 +125,28 @@ export function App() {
     );
   }
 
-  // If not logged in, show Login view
-  if (!currentUser) {
+  // If user or guest is on the Landing Page
+  if (viewLanding && !showLogin) {
+    return (
+      <LandingPage
+        currentUser={currentUser}
+        onOpenLogin={() => setShowLogin(true)}
+        onGoToDashboard={() => setViewLanding(false)}
+      />
+    );
+  }
+
+  // If user requested Login view
+  if (!currentUser || showLogin) {
     return (
       <div className="min-h-screen bg-slate-50">
-        <Login onLoginSuccess={handleLogin} />
+        <Login
+          onLoginSuccess={handleLogin}
+          onBack={() => {
+            setShowLogin(false);
+            if (!currentUser) setViewLanding(true);
+          }}
+        />
       </div>
     );
   }
@@ -140,6 +175,7 @@ export function App() {
         currentUser={currentUser}
         onLogout={handleLogout}
         onSelectUser={handleSelectUser}
+        onViewWebsite={() => setViewLanding(true)}
       />
 
       {/* Main Content Area */}

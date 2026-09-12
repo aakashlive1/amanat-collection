@@ -7,9 +7,10 @@ interface HeaderProps {
   currentUser: User | null;
   onLogout: () => void;
   onSelectUser: (user: User) => void;
+  onViewWebsite?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectUser }) => {
+export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectUser, onViewWebsite }) => {
   const settings = store.getSettings();
   const allUsers = store.getUsers();
   const [isSyncing, setIsSyncing] = useState(false);
@@ -24,7 +25,7 @@ export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectU
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         {/* Brand */}
-        <div className="flex items-center space-x-2.5">
+        <div className="flex items-center space-x-2.5 cursor-pointer" onClick={onViewWebsite}>
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-sm shadow-emerald-200">
             <Building2 className="w-5 h-5" />
           </div>
@@ -41,6 +42,18 @@ export const Header: React.FC<HeaderProps> = ({ currentUser, onLogout, onSelectU
         {/* Cloud Sync & User Controls */}
         {currentUser && (
           <div className="flex items-center space-x-2">
+            {/* View Website Button */}
+            {onViewWebsite && (
+              <button
+                type="button"
+                onClick={onViewWebsite}
+                title="View Public Landing Page"
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition active:scale-95"
+              >
+                <span>Website</span>
+              </button>
+            )}
+
             {/* Live Cloud Sync Button */}
             <button
               onClick={handleManualSync}

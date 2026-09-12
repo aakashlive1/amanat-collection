@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { store } from '../services/store';
 import { User, UserRole } from '../types';
-import { Building2, ShieldCheck, UserCheck, ArrowRight, Phone, KeyRound } from 'lucide-react';
+import { Building2, ShieldCheck, UserCheck, ArrowRight, Phone, KeyRound, ArrowLeft } from 'lucide-react';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
+  onBack?: () => void;
 }
 
-export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
+export const Login: React.FC<LoginProps> = ({ onLoginSuccess, onBack }) => {
   const settings = store.getSettings();
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
   const [phone, setPhone] = useState('');
@@ -44,10 +45,22 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-[90vh] flex flex-col justify-center items-center px-4 py-8">
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 p-6 sm:p-8">
+    <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-8">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 p-6 sm:p-8 relative">
+        {/* Optional Back to Website button */}
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="absolute top-6 left-6 text-xs font-bold text-slate-500 hover:text-emerald-700 flex items-center space-x-1 transition"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Website</span>
+          </button>
+        )}
+
         {/* Brand Header */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-6 pt-2">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center mx-auto mb-3 shadow-md shadow-emerald-200">
             <Building2 className="w-8 h-8" />
           </div>
