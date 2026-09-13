@@ -270,11 +270,44 @@ class DataStore {
     this.set(STORAGE_KEYS.AUTH_USER, user);
   }
 
-  login(phone: string, password?: string, role?: 'admin' | 'collector'): User | null {
-    const users = this.getUsers();
+  async login(phone: string, password?: string, role?: 'admin' | 'collector'): Promise<User | null> {
     const cleanPhone = phone.trim();
     const cleanPassword = password ? password.trim() : '';
+    const selectedRole = role || 'admin';
 
+    // 1. Authenticate against Cloudflare D1 database
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: cleanPhone, password: cleanPassword, role: selectedRole }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.user) {
+          // Update local users store with authentic cloud data
+          const users = this.getUsers();
+          const existingIdx = users.findIndex(u => u.id === data.user.id);
+          if (existingIdx >= 0) {
+            users[existingIdx] = data.user;
+          } else {
+            users.push(data.user);
+          }
+          this.set(STORAGE_KEYS.USERS, users);
+          this.setAuthUser(data.user);
+
+          // Background sync now that we are authenticated
+          this.syncWithCloud();
+          return data.user;
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+
+    // 2. Offline fallback: check local storage
+    const users = this.getUsers();
     const user = users.find(u => {
       const active = u.isActive !== undefined ? Boolean(u.isActive) : Boolean((u as any).is_active ?? 1);
       const phoneMatch = u.phone === cleanPhone;

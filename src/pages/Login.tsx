@@ -14,6 +14,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, onBack }) => {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleRoleChange = (role: UserRole) => {
     setSelectedRole(role);
@@ -22,7 +23,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, onBack }) => {
     setPassword('');
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -36,11 +37,18 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, onBack }) => {
       return;
     }
 
-    const user = store.login(phone, password, selectedRole);
-    if (user) {
-      onLoginSuccess(user);
-    } else {
-      setError('Invalid mobile number or password, or account is inactive.');
+    setIsSubmitting(true);
+    try {
+      const user = await store.login(phone, password, selectedRole);
+      if (user) {
+        onLoginSuccess(user);
+      } else {
+        setError('Invalid mobile number or password, or account is inactive.');
+      }
+    } catch {
+      setError('Connection error. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -145,9 +153,10 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess, onBack }) => {
 
           <button
             type="submit"
-            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 transition flex items-center justify-center space-x-2 cursor-pointer"
+            disabled={isSubmitting}
+            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-200 transition flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-60"
           >
-            <span>Sign In Securely</span>
+            <span>{isSubmitting ? 'Verifying Credentials...' : 'Sign In Securely'}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

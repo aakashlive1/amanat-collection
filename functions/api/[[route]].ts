@@ -97,6 +97,47 @@ export const onRequest = async (context: any) => {
       return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
     }
 
+    // 1.5. Direct Cloudflare D1 Authentication Endpoint
+    if (path === 'login' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      const { phone, password, role } = body;
+      const cleanPhone = String(phone || '').trim();
+      const cleanPassword = String(password || '').trim();
+      const selectedRole = role || 'admin';
+
+      const user = await env.DB.prepare(
+        'SELECT id, name, phone, role, password_hash, is_active, can_collect_all, can_verify_online, can_withdraw, created_at FROM users WHERE phone = ? AND role = ? AND is_active = 1'
+      ).bind(cleanPhone, selectedRole).first();
+
+      if (!user) {
+        return jsonResponse({ success: false, error: 'Invalid mobile number or account is inactive' }, 401);
+      }
+
+      if (user.password_hash !== cleanPassword) {
+        return jsonResponse({ success: false, error: 'Incorrect password' }, 401);
+      }
+
+      const token = btoa(JSON.stringify({ id: user.id, role: user.role, phone: user.phone, t: Date.now() }));
+      const sanitizedUser = {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+        password: user.password_hash,
+        canCollectAll: Boolean(user.can_collect_all),
+        canVerifyPayments: Boolean(user.can_verify_online),
+        canWithdraw: Boolean(user.can_withdraw),
+        isActive: Boolean(user.is_active === 1 || user.is_active === true),
+        createdAt: user.created_at,
+      };
+
+      return jsonResponse({
+        success: true,
+        user: sanitizedUser,
+        token,
+      });
+    }
+
     // 2. Database Auto-Initialization (Run Schema)
     if (path === 'init' && (request.method === 'GET' || request.method === 'POST')) {
       const initQueries = [
